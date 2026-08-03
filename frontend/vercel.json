@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://questionpaper-generation-system.onrender.com/api/:path*"
+      "destination": "https://question-paper-generator-6j5l.onrender.com/api/:path*"
     }
   ]
 }
