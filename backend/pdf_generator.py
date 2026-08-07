@@ -89,12 +89,12 @@ def generate_pdf(paper_data, output_path):
     elements.append(Spacer(1, 6))
 
     # ── Metadata Grid ─────────────────────────────────────
-    subject_code = metadata.get('subject_code', '—')
-    subject_name = metadata.get('subject_name', '—')
-    branch_info = metadata.get('branch_info', '—')
+    subject_code = metadata.get('su00') if metadata.get('su00') and metadata.get('su00') != '-' else metadata.get('subject_code', '-')
+    subject_name = metadata.get('su01') if metadata.get('su01') and metadata.get('su01') != '-' else metadata.get('subject_name', '-')
+    branch_info = metadata.get('branch_info') if metadata.get('branch_info') and metadata.get('branch_info') != '-' else '-'
     duration = metadata.get('duration', '1 ½ hours')
     date = metadata.get('date', '___________')
-    max_marks = metadata.get('max_marks_display', metadata.get('max_marks', '—'))
+    max_marks = metadata.get('max_marks_display', metadata.get('max_marks', '-'))
 
     meta_data = [
         [
@@ -309,7 +309,7 @@ def _create_styles():
         ),
         'CenterSmallBold': ParagraphStyle(
             'CenterSmallBold', parent=base['Normal'],
-            alignment=TA_CENTER, fontSize=9, fontName='Times-Bold', leading=11,
+            alignment=TA_CENTER, fontSize=11, fontName='Times-Bold', leading=13,
         ),
         'MetaText': ParagraphStyle(
             'MetaText', parent=base['Normal'],

@@ -36,6 +36,8 @@ os.makedirs(GENERATED_DIR, exist_ok=True)
 _parsed_cache = {}
 # Key: paper_id → paper_data
 _paper_cache = {}
+# Key: (file_id, exam_type) → { 'paper_id': paper_id, 'paper': paper_data } (Upgrade 3 & 5)
+_active_paper_cache = {}
 
 
 # ── Health Check ──────────────────────────────────────────────
@@ -70,7 +72,8 @@ def upload_file():
 
     # Save uploaded file
     file_id = str(uuid.uuid4())[:8]
-    filename = f"{file_id}_{file.filename}"
+    safe_name = os.path.basename(file.filename)
+    filename = f"{file_id}_{safe_name}"
     filepath = os.path.join(UPLOAD_DIR, filename)
     file.save(filepath)
 
@@ -78,6 +81,9 @@ def upload_file():
         # Parse the question bank
         parsed_data = parse_question_bank(filepath)
         _parsed_cache[file_id] = parsed_data
+
+        # Clear active paper cache on new upload so subsequent generate uses fresh metadata
+        _active_paper_cache.clear()
 
         # Return summary
         metadata = parsed_data.get('metadata', {})
@@ -89,9 +95,11 @@ def upload_file():
             'file_id': file_id,
             'message': 'File uploaded and parsed successfully.',
             'summary': {
-                'subject_code': metadata.get('subject_code', ''),
-                'subject_name': metadata.get('subject_name', ''),
-                'branch': metadata.get('branch', ''),
+                'subject_code': metadata.get('subject_code', '-'),
+                'subject_name': metadata.get('subject_name', '-'),
+                'branch': metadata.get('branch', '-'),
+                'year': metadata.get('yr00', '-'),
+                'semester': metadata.get('se00', '-'),
                 'part_a_groups': part_a_count,
                 'part_b_groups': part_b_count,
                 'part_c_groups': part_c_count,
@@ -110,7 +118,7 @@ def generate():
     Generate a unique question paper from a previously uploaded file.
     
     Request body:
-        { "file_id": "abc12345", "exam_type": "CIE_I" }
+        { "file_id": "abc12345", "exam_type": "CIE_I", "regenerate": false }
     
     Returns:
         JSON with paper_id and complete paper data.
@@ -121,24 +129,35 @@ def generate():
 
     file_id = data['file_id']
     exam_type = data.get('exam_type', 'CIE_I')
+    is_regenerate = data.get('regenerate', False)
 
     if file_id not in _parsed_cache:
         return jsonify({'error': 'File not found. Please upload again.'}), 404
 
+    cache_key = (file_id, exam_type)
+
+    # Upgrade 3 & 5: If not explicit regenerate and paper already cached, return cached paper
+    if not is_regenerate and cache_key in _active_paper_cache:
+        return jsonify(_active_paper_cache[cache_key]), 200
+
     parsed_data = _parsed_cache[file_id]
 
     try:
+        # Upgrade 4: Only Regenerate creates a new random selection
         result = generate_paper(parsed_data, file_id, exam_type)
         paper_id = result['paper_id']
         paper_data = result['paper']
 
-        # Cache for download
-        _paper_cache[paper_id] = paper_data
-
-        return jsonify({
+        response_payload = {
             'paper_id': paper_id,
             'paper': paper_data,
-        }), 200
+        }
+
+        # Update cache
+        _active_paper_cache[cache_key] = response_payload
+        _paper_cache[paper_id] = paper_data
+
+        return jsonify(response_payload), 200
 
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 409  # Conflict — all combinations exhausted
@@ -160,12 +179,18 @@ def download_pdf(paper_id):
     paper_data = _paper_cache[paper_id]
     output_path = os.path.join(GENERATED_DIR, f"{paper_id}.pdf")
 
+    meta = paper_data.get('metadata', {})
+    su00 = meta.get('su00') if meta.get('su00') and meta.get('su00') != '-' else meta.get('subject_code', 'PAPER')
+    exam_raw = meta.get('exam_type', 'CIE_I')
+    exam_str = 'CIE-I' if 'CIE I' in exam_raw or 'CIE_I' in exam_raw else ('CIE-II' if 'CIE II' in exam_raw or 'CIE_II' in exam_raw else ('MODEL' if 'MODEL' in exam_raw or 'Model' in exam_raw else 'CIE-I'))
+    download_filename = f"{exam_str}-{su00}.pdf"
+
     try:
         generate_pdf(paper_data, output_path)
         return send_file(
             output_path,
             as_attachment=True,
-            download_name=f"Question_Paper_{paper_id}.pdf",
+            download_name=download_filename,
             mimetype='application/pdf',
         )
     except Exception as e:
@@ -182,12 +207,18 @@ def download_docx(paper_id):
     paper_data = _paper_cache[paper_id]
     output_path = os.path.join(GENERATED_DIR, f"{paper_id}.docx")
 
+    meta = paper_data.get('metadata', {})
+    su00 = meta.get('su00') if meta.get('su00') and meta.get('su00') != '-' else meta.get('subject_code', 'PAPER')
+    exam_raw = meta.get('exam_type', 'CIE_I')
+    exam_str = 'CIE-I' if 'CIE I' in exam_raw or 'CIE_I' in exam_raw else ('CIE-II' if 'CIE II' in exam_raw or 'CIE_II' in exam_raw else ('MODEL' if 'MODEL' in exam_raw or 'Model' in exam_raw else 'CIE-I'))
+    download_filename = f"{exam_str}-{su00}.docx"
+
     try:
         generate_docx(paper_data, output_path)
         return send_file(
             output_path,
             as_attachment=True,
-            download_name=f"Question_Paper_{paper_id}.docx",
+            download_name=download_filename,
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         )
     except Exception as e:

@@ -2,22 +2,75 @@
 parser.py — DOCX Question Bank Parser.
 
 Reads a .docx file containing a single-table Question Bank and extracts:
-  - Metadata (semester, branch, subject code, subject name)
+  - Metadata (SU00, SU01, BR00, YR00, SE00)
   - Course Outcomes (CO1–CO6)
   - Part A questions grouped by question number
   - Part B questions grouped by question number and sub-part (a/b)
   - Part C questions (same structure as Part B)
   - Marks distribution from section headers
-
-The parser is designed around the observed QB format:
-  - One large table (146 rows × 6 columns)
-  - Metadata rows at top (SE00, BR00, SU00, CO1#–CO6#)
-  - Section header rows ("Part-A ...", "Part – B ...", "Part – C ...")
-  - Question rows with: Q.No, Alt#, QuestionText, KLevel, CO, S/A
 """
 
 import re
 from docx import Document
+
+
+# Mappings for Branch names to Short Branch Code
+BRANCH_MAP = {
+    'ARTIFICIAL INTELLIGENCE AND DATA SCIENCE': 'ADS',
+    'AI & DS': 'ADS',
+    'AI AND DS': 'ADS',
+    'ADS': 'ADS',
+    'COMPUTER SCIENCE AND ENGINEERING': 'CSE',
+    'CSE': 'CSE',
+    'INFORMATION TECHNOLOGY': 'IT',
+    'IT': 'IT',
+    'COMPUTER SCIENCE AND BUSINESS SYSTEMS': 'CSBS',
+    'CSBS': 'CSBS',
+    'ELECTRONICS AND COMMUNICATION ENGINEERING': 'ECE',
+    'ECE': 'ECE',
+    'ELECTRICAL AND ELECTRONICS ENGINEERING': 'EEE',
+    'EEE': 'EEE',
+    'MECHANICAL ENGINEERING': 'MECH',
+    'MECH': 'MECH',
+    'CIVIL ENGINEERING': 'CIVIL',
+    'CIVIL': 'CIVIL',
+}
+
+# Semester to Roman Numeral & Year calculation
+SEM_MAP = {
+    '1': ('I', 'I'),
+    '1ST': ('I', 'I'),
+    'FIRST': ('I', 'I'),
+    'I': ('I', 'I'),
+    '2': ('II', 'I'),
+    '2ND': ('II', 'I'),
+    'SECOND': ('II', 'I'),
+    'II': ('II', 'I'),
+    '3': ('III', 'II'),
+    '3RD': ('III', 'II'),
+    'THIRD': ('III', 'II'),
+    'III': ('III', 'II'),
+    '4': ('IV', 'II'),
+    '4TH': ('IV', 'II'),
+    'FOURTH': ('IV', 'II'),
+    'IV': ('IV', 'II'),
+    '5': ('V', 'III'),
+    '5TH': ('V', 'III'),
+    'FIFTH': ('V', 'III'),
+    'V': ('V', 'III'),
+    '6': ('VI', 'III'),
+    '6TH': ('VI', 'III'),
+    'SIXTH': ('VI', 'III'),
+    'VI': ('VI', 'III'),
+    '7': ('VII', 'IV'),
+    '7TH': ('VII', 'IV'),
+    'SEVENTH': ('VII', 'IV'),
+    'VII': ('VII', 'IV'),
+    '8': ('VIII', 'IV'),
+    '8TH': ('VIII', 'IV'),
+    'EIGHTH': ('VIII', 'IV'),
+    'VIII': ('VIII', 'IV'),
+}
 
 
 def parse_question_bank(filepath):
@@ -29,7 +82,7 @@ def parse_question_bank(filepath):
     
     Returns:
         dict with keys:
-            metadata: { semester, branch, subject_code, subject_name, branch_info }
+            metadata: { su00, su01, br00, yr00, se00, subject_code, subject_name, branch, semester, branch_info }
             course_outcomes: [ { id, text } ]
             part_a: { config, questions: { q_no: [ { text, k_level, co, alt_index } ] } }
             part_b: { config, questions: { q_no: { a: [...], b: [...] } } }
@@ -59,15 +112,18 @@ def parse_question_bank(filepath):
 
     for i, row in enumerate(rows):
         text = row[2].lower() if len(row) > 2 else ''
-        if 'part-a' in text or 'part – a' in text or 'part- a' in text or 'part -a' in text:
+        if not text:
+            text = ' '.join(c for c in row if c).lower()
+
+        if re.search(r'part[\s\-\u2013\u2014\ufffd–—]*a\b', text):
             part_a_start = i
-            part_a_config = _extract_marks_config(row[2])
-        elif 'part-b' in text or 'part – b' in text or 'part- b' in text or 'part -b' in text:
+            part_a_config = _extract_marks_config(text)
+        elif re.search(r'part[\s\-\u2013\u2014\ufffd–—]*b\b', text):
             part_b_start = i
-            part_b_config = _extract_marks_config(row[2])
-        elif 'part-c' in text or 'part – c' in text or 'part- c' in text or 'part -c' in text:
+            part_b_config = _extract_marks_config(text)
+        elif re.search(r'part[\s\-\u2013\u2014\ufffd–—]*c\b', text):
             part_c_start = i
-            part_c_config = _extract_marks_config(row[2])
+            part_c_config = _extract_marks_config(text)
 
     # ── Parse Part A ──────────────────────────────────────
     part_a_end = part_b_start if part_b_start else len(rows)
@@ -107,34 +163,96 @@ def parse_question_bank(filepath):
 
 
 def _extract_metadata(rows):
-    """Extract semester, branch, subject code, and subject name from metadata rows."""
+    """
+    Extract metadata fields from QB:
+      SU00 = Subject Code (e.g. AIT519)
+      SU01 = Subject Name (e.g. Artificial Intelligence)
+      BR00 = Short Branch Code (CSE / IT / ADS / CSBS)
+      YR00 = Year (I / II / III / IV)
+      SE00 = Semester (I / II / III / IV / V / VI / VII / VIII)
+    """
     metadata = {
-        'semester': '',
-        'branch': '',
-        'subject_code': '',
-        'subject_name': '',
-        'branch_info': '',
+        'su00': '-',
+        'su01': '-',
+        'br00': '-',
+        'yr00': '-',
+        'se00': '-',
+        'subject_code': '-',
+        'subject_name': '-',
+        'branch': '-',
+        'semester': '-',
+        'branch_info': '-',
     }
 
-    for row in rows[:12]:  # Metadata is in the first ~12 rows
+    raw_br_list = []
+    raw_se = '-'
+    raw_yr = '-'
+
+    for row in rows[:15]:
         col0 = row[0].strip().upper() if row[0] else ''
         col2 = row[2].strip() if len(row) > 2 else ''
 
+        if not col2:
+            continue
+
         if col0 == 'SE00' or col0.startswith('SE'):
-            metadata['semester'] = col2
+            raw_se = col2
 
-        elif col0 == 'BR00' or col0.startswith('BR'):
-            metadata['branch'] = col2
-            metadata['branch_info'] = col2
+        elif col0.startswith('BR'):
+            if col2 not in raw_br_list:
+                raw_br_list.append(col2)
 
-        elif col0 == 'SU00' or col0.startswith('SU'):
-            # Format: "22AI401 – MACHINE LEARNING  (Lab integrated)"
+        elif col0 == 'YR00' or col0.startswith('YR'):
+            raw_yr = col2
+
+        elif col0 == 'SU00' or col0.startswith('SU00'):
             match = re.match(r'([A-Z0-9]+)\s*[–\-]\s*(.*)', col2)
             if match:
-                metadata['subject_code'] = match.group(1).strip()
-                metadata['subject_name'] = match.group(2).strip()
+                metadata['su00'] = match.group(1).strip()
+                if metadata['su01'] == '-':
+                    metadata['su01'] = match.group(2).strip()
             else:
-                metadata['subject_name'] = col2
+                metadata['su00'] = col2
+
+        elif col0 == 'SU01' or col0.startswith('SU01'):
+            metadata['su01'] = col2
+
+    # ── Process BR00 (Complete Branch Information) ─────────
+    if raw_br_list:
+        full_br = ", ".join(raw_br_list)
+        metadata['br00'] = full_br
+        metadata['branch'] = full_br
+
+    # ── Process SE00 (Semester) & YR00 (Year) ────────────
+    if raw_se != '-':
+        match_sem = re.search(r'\b(1ST|2ND|3RD|4TH|5TH|6TH|7TH|8TH|1|2|3|4|5|6|7|8|VIII|VII|VI|V|IV|III|II|I)\b', raw_se.upper())
+        if match_sem:
+            sem_key = match_sem.group(1)
+            sem_roman, calc_yr = SEM_MAP.get(sem_key, (sem_key, '-'))
+            metadata['se00'] = sem_roman
+            metadata['semester'] = sem_roman
+            if raw_yr == '-':
+                raw_yr = calc_yr
+
+    # ── Process YR00 (Year) ───────────────────────────────
+    if raw_yr != '-':
+        cleaned_yr = raw_yr.upper()
+        match_yr = re.search(r'\b(1ST|2ND|3RD|4TH|1|2|3|4|IV|III|II|I)\b', cleaned_yr)
+        if match_yr:
+            yr_key = match_yr.group(1)
+            yr_roman, _ = SEM_MAP.get(yr_key, (yr_key, '-'))
+            metadata['yr00'] = yr_roman
+        else:
+            metadata['yr00'] = raw_yr
+
+    # Fallbacks for subject code / subject name
+    if metadata['su00'] != '-':
+        metadata['subject_code'] = metadata['su00']
+    if metadata['su01'] != '-':
+        metadata['subject_name'] = metadata['su01']
+
+    # Dynamically build Branch / Year / Sem: BR00 / YR00 / SE00
+    metadata['branch_info'] = f"{metadata['br00']} / {metadata['yr00']} / {metadata['se00']}"
 
     return metadata
 
@@ -146,7 +264,6 @@ def _extract_course_outcomes(rows):
         col0 = row[0].strip().upper() if row[0] else ''
         col2 = row[2].strip() if len(row) > 2 else ''
 
-        # Match CO1#, CO2#, etc.
         match = re.match(r'(CO\d+)#?', col0)
         if match and col2:
             outcomes.append({
@@ -158,76 +275,46 @@ def _extract_course_outcomes(rows):
 
 
 def _extract_marks_config(text):
-    """
-    Extract the marks configuration string from a section header.
-    E.g., "Part-A (10 x 2 = 20 Marks)" → "10 x 2 = 20 Marks"
-    """
-    match = re.search(r'\(([^)]+)\)', text)
+    """Extract string like '5 x 2 = 10 Marks' from section header text."""
+    match = re.search(r'\(\s*\d+\s*[xX*]\s*\d+[^)]*\)', text)
     if match:
-        return match.group(1).strip()
-    
-    # Try without parentheses: "Part – A  10 x 2 = 20 Marks"
-    match = re.search(r'(\d+\s*[x×]\s*\d+\s*=\s*\d+\s*Marks?)', text, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-
-    return text
+        return match.group(0).strip('()').strip()
+    return ''
 
 
 def _extract_marks_per_question(config):
-    """
-    Extract marks per question from config string.
-    E.g., "10 x 2 = 20 Marks" → 2
-    E.g., "5 x 13 = 65 Marks" → 13
-    """
-    match = re.search(r'\d+\s*[x×]\s*(\d+)', config)
+    """Parse mark per question from config string like '5 x 2 = 10 Marks'."""
+    match = re.search(r'\d+\s*[xX*]\s*(\d+)', config)
     if match:
         return int(match.group(1))
     return 0
 
 
 def _parse_part_a(rows, start_idx, end_idx):
-    """
-    Parse Part A questions. Each question number has multiple alternatives.
-    
-    Returns dict: { q_no: [ { text, k_level, co, alt_index } ] }
-    """
-    if start_idx is None:
-        return {}
-
+    """Parse Part A questions into dictionary grouped by question number."""
     questions = {}
+    if start_idx is None:
+        return questions
 
-    # Skip the header rows (section header + column headers)
-    data_start = start_idx + 1
-    # Find where actual question data begins (skip column header row)
-    for i in range(data_start, min(data_start + 3, end_idx)):
-        col0 = rows[i][0].strip().lower() if rows[i][0] else ''
-        if 'qp' in col0 or 'q.no' in col0 or 'no' in col0:
-            data_start = i + 1
-            break
+    for row in rows[start_idx + 1:end_idx]:
+        if len(row) < 3:
+            continue
 
-    for i in range(data_start, end_idx):
-        row = rows[i]
-        q_no_str = row[0].strip().rstrip('.')
-        alt_str = row[1].strip() if len(row) > 1 else ''
+        q_no_raw = row[0].strip()
+        alt_raw = row[1].strip() if len(row) > 1 else '1'
         text = row[2].strip() if len(row) > 2 else ''
         k_level = row[3].strip() if len(row) > 3 else ''
         co = row[4].strip() if len(row) > 4 else ''
 
-        # Skip empty rows or section headers
-        if not text or not q_no_str:
+        if not text:
             continue
 
-        # Skip if q_no can't be parsed as a number
-        try:
-            q_no = int(q_no_str)
-        except ValueError:
+        q_match = re.search(r'(\d+)', q_no_raw)
+        if not q_match:
             continue
 
-        try:
-            alt_index = int(alt_str)
-        except ValueError:
-            alt_index = 1
+        q_no = int(q_match.group(1))
+        alt_idx = int(alt_raw) if alt_raw.isdigit() else 1
 
         if q_no not in questions:
             questions[q_no] = []
@@ -236,59 +323,53 @@ def _parse_part_a(rows, start_idx, end_idx):
             'text': text,
             'k_level': k_level,
             'co': co,
-            'alt_index': alt_index,
+            'alt_index': alt_idx,
         })
 
     return questions
 
 
 def _parse_part_bc(rows, start_idx, end_idx):
-    """
-    Parse Part B or Part C questions.
-    Format: Q.a and Q.b with multiple alternatives each.
-    
-    Returns dict: { q_no: { 'a': [...], 'b': [...] } }
-    """
-    if start_idx is None:
-        return {}
-
+    """Parse Part B or Part C questions into dictionary grouped by question number and sub-part (a/b)."""
     questions = {}
+    if start_idx is None:
+        return questions
 
-    # Skip header rows
-    data_start = start_idx + 1
+    current_q_no = None
 
-    for i in range(data_start, end_idx):
-        row = rows[i]
-        q_no_str = row[0].strip().rstrip('.')
-        alt_str = row[1].strip() if len(row) > 1 else ''
+    for row in rows[start_idx + 1:end_idx]:
+        if len(row) < 3:
+            continue
+
+        q_no_raw = row[0].strip()
+        alt_raw = row[1].strip() if len(row) > 1 else '1'
         text = row[2].strip() if len(row) > 2 else ''
         k_level = row[3].strip() if len(row) > 3 else ''
         co = row[4].strip() if len(row) > 4 else ''
+        sub_part_raw = row[5].strip() if len(row) > 5 else ''
 
-        if not text or not q_no_str:
+        if not text:
             continue
 
-        # Parse format like "11.a" or "11.b" or "16.a."
-        match = re.match(r'(\d+)\s*[.]\s*([ab])', q_no_str, re.IGNORECASE)
-        if not match:
+        q_match = re.search(r'(\d+)', q_no_raw)
+        if q_match:
+            current_q_no = int(q_match.group(1))
+
+        if not current_q_no:
             continue
 
-        q_no = int(match.group(1))
-        sub_part = match.group(2).lower()
+        sub_match = re.search(r'([abAB])', q_no_raw + ' ' + sub_part_raw)
+        sub_part = sub_match.group(1).lower() if sub_match else 'a'
+        alt_idx = int(alt_raw) if alt_raw.isdigit() else 1
 
-        try:
-            alt_index = int(alt_str)
-        except ValueError:
-            alt_index = 1
+        if current_q_no not in questions:
+            questions[current_q_no] = {'a': [], 'b': []}
 
-        if q_no not in questions:
-            questions[q_no] = {'a': [], 'b': []}
-
-        questions[q_no][sub_part].append({
+        questions[current_q_no][sub_part].append({
             'text': text,
             'k_level': k_level,
             'co': co,
-            'alt_index': alt_index,
+            'alt_index': alt_idx,
         })
 
     return questions

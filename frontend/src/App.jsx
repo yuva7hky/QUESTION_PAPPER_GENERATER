@@ -1,10 +1,9 @@
 import { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 
-// Configure API Base URL
+// Configure API Base URL for local development and production deployment
 axios.defaults.baseURL =
-  import.meta.env.VITE_API_URL ||
-  'https://question-paper-generator-6j5l.onrender.com';
+  import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
@@ -67,12 +66,10 @@ export default function App() {
   }, [file]);
 
   /** Core generation logic (shared by generate and regenerate) */
-  const doGenerate = useCallback(async (skipUpload = false) => {
+  const doGenerate = useCallback(async (skipUpload = false, isRegenerate = false) => {
     if (!file) return;
 
     setLoading(true);
-    setPaper(null);
-    setPaperId(null);
 
     try {
       let fid = fileIdRef.current;
@@ -80,16 +77,17 @@ export default function App() {
         fid = await uploadFile();
       }
 
-      setStatus('Generating question paper…');
+      setStatus(isRegenerate ? 'Regenerating new paper…' : 'Loading question paper…');
       const generateRes = await axios.post('/api/generate', {
         file_id: fid,
         exam_type: examType,
+        regenerate: isRegenerate,
       });
 
       setPaper(generateRes.data.paper);
       setPaperId(generateRes.data.paper_id);
       setStatus('');
-      showToast('success', `${examType === 'MODEL' ? 'Model Exam (100 Marks)' : 'CIE-I (50 Marks)'} paper generated successfully!`);
+      showToast('success', isRegenerate ? 'New question paper generated!' : 'Question paper ready!');
     } catch (err) {
       const message =
         err.response?.data?.error || err.message || 'Something went wrong.';
@@ -100,14 +98,14 @@ export default function App() {
     }
   }, [file, examType, uploadFile, showToast]);
 
-  /** Generate — uploads + generates */
+  /** Generate — displays cached paper if available, never creates new random paper after initial creation */
   const handleGenerate = useCallback(() => {
-    doGenerate(false);
+    doGenerate(!!fileIdRef.current, false);
   }, [doGenerate]);
 
-  /** Regenerate — reuses uploaded file, generates new paper */
+  /** Regenerate — the ONLY action that creates a new random selection */
   const handleRegenerate = useCallback(() => {
-    doGenerate(true);
+    doGenerate(true, true);
   }, [doGenerate]);
 
   /** Download handler (shared for PDF and DOCX) */
@@ -124,10 +122,11 @@ export default function App() {
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute(
-          'download',
-          `Question_Paper_${paperId}.${format === 'pdf' ? 'pdf' : 'docx'}`
-        );
+        const formattedExam = (examType || 'CIE_I').replace('_', '-');
+        const subCode = paper?.metadata?.su00 || paper?.metadata?.subject_code || 'PAPER';
+        const fileName = `${formattedExam}-${subCode}.${format === 'pdf' ? 'pdf' : 'docx'}`;
+
+        link.setAttribute('download', fileName);
         document.body.appendChild(link);
         link.click();
         link.remove();

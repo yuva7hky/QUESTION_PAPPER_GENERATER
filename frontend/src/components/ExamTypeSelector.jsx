@@ -1,41 +1,56 @@
 /**
  * ExamTypeSelector Component
  * 
- * Dropdown to select the examination type.
- * Currently supports CIE-I (50 Marks) and Model Examination (100 Marks).
+ * Displays three radio button options:
+ *   - CIE – I (CIE_I)
+ *   - CIE – II (CIE_II)
+ *   - Model Examination (MODEL)
  * 
  * Props:
- *   examType   — current selected value ('CIE_I' | 'MODEL')
+ *   examType   — current selected value ('CIE_I' | 'CIE_II' | 'MODEL')
  *   onChange   — callback(newValue) when selection changes
  *   disabled   — disables interaction when generating
  */
 export default function ExamTypeSelector({ examType, onChange, disabled }) {
+  const options = [
+    { id: 'exam-type-cie-1', value: 'CIE_I', label: 'CIE – I' },
+    { id: 'exam-type-cie-2', value: 'CIE_II', label: 'CIE – II' },
+    { id: 'exam-type-model', value: 'MODEL', label: 'Model Examination' },
+  ];
+
   return (
     <div>
-      <label
-        htmlFor="exam-type-select"
-        className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide"
-      >
+      <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
         Select Examination Type
       </label>
-      <select
-        id="exam-type-select"
-        value={examType}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-primary-400 transition disabled:opacity-50 disabled:cursor-not-allowed appearance-none"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")`,
-          backgroundPosition: 'right 8px center',
-          backgroundRepeat: 'no-repeat',
-          backgroundSize: '20px',
-          paddingRight: '36px',
-        }}
-      >
-        <option value="CIE_I">CIE-I (50 Marks)</option>
-        <option value="CIE_II">CIE-II (50 Marks)</option>
-        <option value="MODEL">Model Examination (100 Marks)</option>
-      </select>
+      <div className="space-y-2">
+        {options.map((opt) => {
+          const isSelected = examType === opt.value;
+          return (
+            <label
+              key={opt.value}
+              htmlFor={opt.id}
+              className={`flex items-center gap-3 p-3 rounded-lg border text-sm font-medium cursor-pointer transition ${
+                isSelected
+                  ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900 font-semibold shadow-xs'
+                  : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50/50'
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <input
+                type="radio"
+                id={opt.id}
+                name="examType"
+                value={opt.value}
+                checked={isSelected}
+                onChange={() => onChange(opt.value)}
+                disabled={disabled}
+                className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500 cursor-pointer disabled:cursor-not-allowed"
+              />
+              <span>{opt.label}</span>
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }

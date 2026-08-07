@@ -46,12 +46,12 @@ export default function PreviewSection({ paper }) {
 
       {/* ── Metadata Grid ─────────────────────────────── */}
       <div className="grid grid-cols-2 gap-y-1 text-[11px] mb-3 pb-2 border-b border-gray-400">
-        <p><span className="font-bold">SUB CODE:</span> {metadata?.subject_code || '—'}</p>
-        <p className="text-right"><span className="font-bold">SUBJECT:</span> {metadata?.subject_name || '—'}</p>
+        <p><span className="font-bold">SUB CODE:</span> {metadata?.su00 || metadata?.subject_code || '-'}</p>
+        <p className="text-right"><span className="font-bold">SUBJECT:</span> {metadata?.su01 || metadata?.subject_name || '-'}</p>
         <p><span className="font-bold">Duration:</span> {metadata?.duration || '1 ½ hours'}</p>
-        <p className="text-right"><span className="font-bold">Branch / Year / Sem:</span> {metadata?.branch_info || '—'}</p>
+        <p className="text-right"><span className="font-bold">Branch / Year / Sem:</span> {metadata?.branch_info || '-'}</p>
         <p><span className="font-bold">Date:</span> {metadata?.date || '___________'}</p>
-        <p className="text-right"><span className="font-bold">Maximum:</span> {metadata?.max_marks_display || metadata?.max_marks || '—'}</p>
+        <p className="text-right"><span className="font-bold">Maximum:</span> {metadata?.max_marks_display || metadata?.max_marks || '-'}</p>
       </div>
 
       {/* ── Course Outcomes ────────────────────────────── */}
@@ -213,7 +213,7 @@ export default function PreviewSection({ paper }) {
       </div>
 
       {/* ── K-Level Legend ─────────────────────────────── */}
-      <p className="text-[9px] text-center text-gray-600 border-t border-gray-200 pt-2">
+      <p className="text-[11px] text-center text-gray-600 border-t border-gray-200 pt-2">
         K1-Remembering, K2-Understanding, K3-Applying, K4-Analysing, K5-Evaluating, K6-Creating
       </p>
     </div>

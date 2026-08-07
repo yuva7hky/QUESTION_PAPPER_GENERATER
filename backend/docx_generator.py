@@ -1,8 +1,8 @@
 """
-docx_generator.py — Generate professional CIE-I / Model Question Paper DOCX.
+docx_generator.py — Generate professional CIE-I / CIE-II / Model Question Paper DOCX.
 
 Uses python-docx to create a Word document matching the official
-JIT examination paper format (borderless clean text layout).
+JIT examination paper format (borderless clean text layout matching PDF).
 """
 
 from docx import Document
@@ -13,9 +13,13 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
 
 
+# Column widths matching PDF A4 layout (Total = 18.0 cm)
+QUESTION_COL_WIDTHS = [Cm(1.2), Cm(12.5), Cm(1.4), Cm(1.4), Cm(1.5)]
+
+
 def generate_docx(paper_data, output_path):
     """
-    Generate a DOCX question paper matching the printed JIT exam paper.
+    Generate a DOCX question paper matching the printed JIT exam paper and PDF export.
     
     Args:
         paper_data: Complete paper dict from generator.generate_paper()
@@ -23,7 +27,7 @@ def generate_docx(paper_data, output_path):
     """
     doc = Document()
 
-    # ── Page Setup ────────────────────────────────────────
+    # ── Page Setup (Margins match PDF) ────────────────────
     section = doc.sections[0]
     section.top_margin = Cm(1.2)
     section.bottom_margin = Cm(1.2)
@@ -43,7 +47,7 @@ def generate_docx(paper_data, output_path):
     
     reg_cell_0 = reg_table.cell(0, 0)
     reg_cell_0.paragraphs[0].text = "Reg No"
-    _set_font(reg_cell_0.paragraphs[0].runs[0], bold=True, size=9)
+    _set_font(reg_cell_0.paragraphs[0].runs[0], bold=True, size=11)
 
     for i in range(1, 11):
         cell = reg_table.cell(0, i)
@@ -54,9 +58,9 @@ def generate_docx(paper_data, output_path):
 
     # ── College Header ────────────────────────────────────
     _add_paragraph(doc, "JEPPIAAR INSTITUTE OF TECHNOLOGY", bold=True, size=12, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(doc, "(An Autonomous Institution)", size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_paragraph(doc, "(An Autonomous Institution)", size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
     _add_paragraph(doc, '"Self-Belief | Self-Discipline | Self-Respect"', italic=True, size=8.5, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(doc, "Kunnam, Sunguvarchatram, Sriperumbudur – 631 604.", size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_paragraph(doc, "Kunnam, Sunguvarchatram, Sriperumbudur – 631 604.", size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
     _add_spacer(doc, 4)
 
     # ── Exam Title ────────────────────────────────────────
@@ -70,17 +74,18 @@ def generate_docx(paper_data, output_path):
     meta_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     _remove_table_borders(meta_table)
 
-    subject_code = metadata.get('subject_code', '—')
-    subject_name = metadata.get('subject_name', '—')
-    branch_info = metadata.get('branch_info', '—')
+    subject_code = metadata.get('su00') if metadata.get('su00') and metadata.get('su00') != '-' else metadata.get('subject_code', '-')
+    subject_name = metadata.get('su01') if metadata.get('su01') and metadata.get('su01') != '-' else metadata.get('subject_name', '-')
+    branch_info = metadata.get('branch_info') if metadata.get('branch_info') and metadata.get('branch_info') != '-' else '-'
     duration = metadata.get('duration', '1 ½ hours')
     date = metadata.get('date', '___________')
-    max_marks = metadata.get('max_marks_display', metadata.get('max_marks', '—'))
+    max_marks = metadata.get('max_marks_display', metadata.get('max_marks', '-'))
 
     _set_meta_row(meta_table, 0, f"SUB CODE: {subject_code}", f"SUBJECT: {subject_name}")
     _set_meta_row(meta_table, 1, f"Duration: {duration}", f"Branch / Year / Sem: {branch_info}")
     _set_meta_row(meta_table, 2, f"Date: {date}", f"Maximum: {max_marks}")
 
+    _set_meta_table_widths(meta_table)
     _add_spacer(doc, 4)
 
     # ── Course Outcomes ───────────────────────────────────
@@ -88,21 +93,21 @@ def generate_docx(paper_data, output_path):
         p = doc.add_paragraph()
         run = p.add_run("Course Outcome: – After Successful Completion of the Course, the Students should be able to")
         run.bold = True
-        _set_font(run, size=9)
+        _set_font(run, size=11)
 
         for co in course_outcomes:
             p = doc.add_paragraph()
             p.paragraph_format.left_indent = Cm(0.8)
             run1 = p.add_run(f"{co['id']}    ")
             run1.bold = True
-            _set_font(run1, size=9)
+            _set_font(run1, size=11)
             run2 = p.add_run(co['text'])
-            _set_font(run2, size=9)
+            _set_font(run2, size=11)
 
     _add_spacer(doc, 4)
 
     # ── Instructions ──────────────────────────────────────
-    _add_paragraph(doc, "Answer all questions.", bold=True, size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_paragraph(doc, "Answer all questions.", bold=True, size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
     _add_spacer(doc, 4)
 
     # ═══════════ PART A ═══════════════════════════════════
@@ -125,6 +130,7 @@ def generate_docx(paper_data, output_path):
             _set_cell_text(row_cells[3], str(q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row_cells[4], str(q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
 
+        _set_table_col_widths(table, QUESTION_COL_WIDTHS)
         _add_spacer(doc, 6)
 
     # ═══════════ PART B ═══════════════════════════════════
@@ -163,6 +169,7 @@ def generate_docx(paper_data, output_path):
             _set_cell_text(row2[3], str(b_q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row2[4], str(b_q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
 
+        _set_table_col_widths(table, QUESTION_COL_WIDTHS)
         _add_spacer(doc, 6)
 
     # ═══════════ PART C ═══════════════════════════════════
@@ -198,11 +205,12 @@ def generate_docx(paper_data, output_path):
             _set_cell_text(row2[3], str(b_q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row2[4], str(b_q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
 
+        _set_table_col_widths(table, QUESTION_COL_WIDTHS)
         _add_spacer(doc, 6)
 
     # ── EXAMCELL Footer Block ─────────────────────────────
     _add_paragraph(doc, "EXAMCELL", bold=True, size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(doc, "Jeppiaar Institute of Technology (Autonomous)", bold=True, size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_paragraph(doc, "Jeppiaar Institute of Technology (Autonomous)", bold=True, size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
     _add_paragraph(doc, "Kunnam, Sunguvarchatram, Sriperumbudur – 631 604.", size=8.5, align=WD_ALIGN_PARAGRAPH.CENTER)
     _add_spacer(doc, 4)
 
@@ -220,14 +228,14 @@ def generate_docx(paper_data, output_path):
 
 # ── Helper Functions ──────────────────────────────────────────
 
-def _set_font(run, bold=False, italic=False, size=9):
+def _set_font(run, bold=False, italic=False, size=11):
     run.font.name = 'Times New Roman'
     run.font.size = Pt(size)
     run.bold = bold
     run.italic = italic
 
 
-def _add_paragraph(doc, text, bold=False, italic=False, size=9, align=WD_ALIGN_PARAGRAPH.LEFT):
+def _add_paragraph(doc, text, bold=False, italic=False, size=11, align=WD_ALIGN_PARAGRAPH.LEFT):
     p = doc.add_paragraph()
     p.alignment = align
     p.paragraph_format.space_after = Pt(1)
@@ -250,13 +258,20 @@ def _set_meta_row(table, row_idx, left_text, right_text):
     p_l = cell_l.paragraphs[0]
     p_l.paragraph_format.space_after = Pt(1)
     run_l = p_l.add_run(left_text)
-    _set_font(run_l, size=9)
+    _set_font(run_l, size=11)
 
     p_r = cell_r.paragraphs[0]
     p_r.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     p_r.paragraph_format.space_after = Pt(1)
     run_r = p_r.add_run(right_text)
-    _set_font(run_r, size=9)
+    _set_font(run_r, size=11)
+
+
+def _set_meta_table_widths(table):
+    table.autofit = False
+    for row in table.rows:
+        row.cells[0].width = Cm(8.0)
+        row.cells[1].width = Cm(10.0)
 
 
 def _set_table_headers(table):
@@ -269,10 +284,19 @@ def _set_table_headers(table):
 def _set_cell_text(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
     p = cell.paragraphs[0]
     p.alignment = align
-    p.paragraph_format.space_after = Pt(1)
+    p.paragraph_format.space_after = Pt(2)
     p.paragraph_format.space_before = Pt(1)
     run = p.add_run(text)
-    _set_font(run, bold=bold, size=9)
+    _set_font(run, bold=bold, size=11)
+
+
+def _set_table_col_widths(table, widths):
+    """Ensure explicit column widths across all table cells in Word."""
+    table.autofit = False
+    for row in table.rows:
+        for i, width in enumerate(widths):
+            if i < len(row.cells):
+                row.cells[i].width = width
 
 
 def _remove_table_borders(table):

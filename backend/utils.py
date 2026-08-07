@@ -41,22 +41,27 @@ def generate_paper_fingerprint(selected_questions):
     # Build a canonical string from all selections
     parts = []
 
-    # Part A: list of (question_number, alternative_index) tuples
+    # Part A: question text / alt fingerprint
     part_a = selected_questions.get('part_a', {})
     for q in (part_a.get('questions', []) if isinstance(part_a, dict) else part_a):
-        parts.append(f"A-{q['q_no']}-{q['alt_index']}")
+        text_hash = hashlib.md5(q.get('text', '').encode()).hexdigest()[:6]
+        parts.append(f"A-{q['q_no']}-{text_hash}")
 
-    # Part B: list of (question_number, sub_part, alternative_index)
+    # Part B: question text hashes for sub-parts a and b
     part_b = selected_questions.get('part_b', {})
     for g in (part_b.get('questions', []) if isinstance(part_b, dict) else part_b):
-        parts.append(f"B-{g['q_no']}-a-{g['a']['alt_index']}")
-        parts.append(f"B-{g['q_no']}-b-{g['b']['alt_index']}")
+        a_hash = hashlib.md5(g['a'].get('text', '').encode()).hexdigest()[:6]
+        b_hash = hashlib.md5(g['b'].get('text', '').encode()).hexdigest()[:6]
+        parts.append(f"B-{g['q_no']}-a-{a_hash}")
+        parts.append(f"B-{g['q_no']}-b-{b_hash}")
 
-    # Part C: same structure as Part B
+    # Part C: question text hashes for sub-parts a and b
     part_c = selected_questions.get('part_c', {})
     for g in (part_c.get('questions', []) if isinstance(part_c, dict) else part_c):
-        parts.append(f"C-{g['q_no']}-a-{g['a']['alt_index']}")
-        parts.append(f"C-{g['q_no']}-b-{g['b']['alt_index']}")
+        a_hash = hashlib.md5(g['a'].get('text', '').encode()).hexdigest()[:6]
+        b_hash = hashlib.md5(g['b'].get('text', '').encode()).hexdigest()[:6]
+        parts.append(f"C-{g['q_no']}-a-{a_hash}")
+        parts.append(f"C-{g['q_no']}-b-{b_hash}")
 
     canonical = '|'.join(parts)
     return hashlib.sha256(canonical.encode()).hexdigest()

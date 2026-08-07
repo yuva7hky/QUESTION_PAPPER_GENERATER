@@ -264,7 +264,7 @@ def _select_model(parsed_data):
             })
 
     return {
-        'metadata': parsed_data['metadata'],
+        'metadata': dict(parsed_data['metadata']),
         'course_outcomes': parsed_data['course_outcomes'],
         'part_a': {
             'config': '10 x 2 = 20 Marks',

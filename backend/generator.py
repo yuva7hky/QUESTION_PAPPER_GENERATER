@@ -34,49 +34,42 @@ def generate_paper(parsed_data, file_id, exam_type='CIE_I'):
         dict with:
             paper_id: unique download ID
             paper: complete paper structure for preview
-    
-    Raises:
-        RuntimeError: if unable to generate a unique paper after MAX_RETRIES
     """
-    for attempt in range(MAX_RETRIES):
-        # Select random questions
+    selected = None
+    for _ in range(MAX_RETRIES):
         selected = select_questions(parsed_data, exam_type)
-
-        # Generate fingerprint
         fingerprint = generate_paper_fingerprint(selected)
 
-        # Check uniqueness
         if is_paper_unique(file_id, fingerprint):
-            # Register and return
             register_paper(file_id, fingerprint)
-            paper_id = generate_paper_id()
+            break
 
-            # Add display-friendly metadata
-            selected['metadata']['exam_type'] = EXAM_TYPES.get(exam_type, exam_type)
-            selected['metadata']['max_marks'] = _calculate_max_marks(selected)
-            selected['metadata']['date'] = '___________'
-            selected['metadata']['month_year'] = _get_month_year()
+    if selected is None:
+        selected = select_questions(parsed_data, exam_type)
 
-            # Duration depends on exam type
-            if exam_type in ('CIE_I', 'CIE_II'):
-                selected['metadata']['duration'] = '1 ½ hours'
-                selected['metadata']['max_marks_display'] = '50 Marks'
-            elif exam_type == 'MODEL':
-                selected['metadata']['duration'] = '3 hours'
-                selected['metadata']['max_marks_display'] = '100 Marks'
-            else:
-                selected['metadata']['duration'] = '1 ½ hours'
-                selected['metadata']['max_marks_display'] = '50 Marks'
+    paper_id = generate_paper_id()
 
-            return {
-                'paper_id': paper_id,
-                'paper': selected,
-            }
+    selected['metadata'] = dict(selected['metadata'])
+    selected['metadata']['exam_type'] = EXAM_TYPES.get(exam_type, exam_type)
+    selected['metadata']['max_marks'] = _calculate_max_marks(selected)
+    selected['metadata']['date'] = '___________'
+    selected['metadata']['month_year'] = _get_month_year()
 
-    raise RuntimeError(
-        f"Unable to generate a unique paper after {MAX_RETRIES} attempts. "
-        "All possible combinations may have been exhausted."
-    )
+    # Duration depends on exam type
+    if exam_type in ('CIE_I', 'CIE_II'):
+        selected['metadata']['duration'] = '1 ½ hours'
+        selected['metadata']['max_marks_display'] = '50 Marks'
+    elif exam_type == 'MODEL':
+        selected['metadata']['duration'] = '3 hours'
+        selected['metadata']['max_marks_display'] = '100 Marks'
+    else:
+        selected['metadata']['duration'] = '1 ½ hours'
+        selected['metadata']['max_marks_display'] = '50 Marks'
+
+    return {
+        'paper_id': paper_id,
+        'paper': selected,
+    }
 
 
 def _calculate_max_marks(selected):
