@@ -3,7 +3,8 @@ import axios from 'axios';
 
 // Configure API Base URL for local development and production deployment
 axios.defaults.baseURL =
-  import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  import.meta.env.VITE_API_URL ||
+  'https://question-paper-generator-6j5l.onrender.com';
 
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
