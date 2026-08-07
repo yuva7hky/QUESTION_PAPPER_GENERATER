@@ -1,9 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 
-// Configure API Base URL for local development and production deployment
+// Configure API Base URL
 axios.defaults.baseURL =
-  import.meta.env.VITE_API_URL ||
   'https://question-paper-generator-6j5l.onrender.com';
 
 import Header from './components/Header';
