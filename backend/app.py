@@ -10,7 +10,7 @@ API Endpoints:
 
 import os
 import uuid
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 
 from parser import parse_question_bank
@@ -51,6 +51,16 @@ def health_check():
     }), 200
 
 
+# ── API: Serve Extracted Question Images ──────────────────────
+@app.route('/api/images/<file_id>/<filename>', methods=['GET'])
+def serve_question_image(file_id, filename):
+    """Serve question diagrams and images extracted from uploaded Question Banks."""
+    img_dir = os.path.join(UPLOAD_DIR, 'images', file_id)
+    if not os.path.exists(os.path.join(img_dir, filename)):
+        return jsonify({'error': 'Image not found'}), 404
+    return send_from_directory(img_dir, filename)
+
+
 # ── API: Upload ───────────────────────────────────────────────
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
@@ -79,7 +89,7 @@ def upload_file():
 
     try:
         # Parse the question bank
-        parsed_data = parse_question_bank(filepath)
+        parsed_data = parse_question_bank(filepath, file_id=file_id)
         _parsed_cache[file_id] = parsed_data
 
         # Clear active paper cache on new upload so subsequent generate uses fresh metadata

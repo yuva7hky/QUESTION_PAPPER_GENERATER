@@ -19,7 +19,7 @@ export default function PreviewSection({ paper }) {
       <div className="flex justify-end mb-4">
         <div className="flex items-center gap-[2px]" style={{ fontSize: '11px' }}>
           <span className="font-bold mr-1.5 font-sans text-xs">Reg No</span>
-          {Array.from({ length: 10 }).map((_, i) => (
+          {Array.from({ length: 12 }).map((_, i) => (
             <div
               key={i}
               className="w-[18px] h-[22px] border border-black bg-white"
@@ -93,7 +93,21 @@ export default function PreviewSection({ paper }) {
             {part_a.questions.map((q, i) => (
               <div key={i} className="flex items-start">
                 <div className="w-10 text-center font-medium pt-0.5">{q.q_no}</div>
-                <div className="flex-1 pr-3">{q.text}</div>
+                <div className="flex-1 pr-3">
+                  <div>{q.text}</div>
+                  {q.images && q.images.length > 0 && (
+                    <div className="mt-2 mb-1 flex flex-col items-center gap-2">
+                      {q.images.map((imgSrc, imgIdx) => (
+                        <img
+                          key={imgIdx}
+                          src={imgSrc}
+                          alt={`Diagram for question ${q.q_no}`}
+                          className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="w-14 text-center pt-0.5">{q.co}</div>
                 <div className="w-14 text-center pt-0.5">{q.marks}</div>
                 <div className="w-16 text-center pt-0.5">{q.k_level}</div>
@@ -126,7 +140,21 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10 text-center font-bold">{group.q_no}.</div>
                   <div className="flex-1 pr-3">
-                    <span className="font-bold mr-1">a)</span> {group.a.text}
+                    <div>
+                      <span className="font-bold mr-1">a)</span> {group.a.text}
+                    </div>
+                    {group.a.images && group.a.images.length > 0 && (
+                      <div className="mt-2 mb-1 flex flex-col items-center gap-2">
+                        {group.a.images.map((imgSrc, imgIdx) => (
+                          <img
+                            key={imgIdx}
+                            src={imgSrc}
+                            alt={`Diagram for question ${group.q_no}a`}
+                            className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="w-14 text-center">{group.a.co}</div>
                   <div className="w-14 text-center">{group.a.marks}</div>
@@ -142,7 +170,21 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10"></div>
                   <div className="flex-1 pr-3">
-                    <span className="font-bold mr-1">b)</span> {group.b.text}
+                    <div>
+                      <span className="font-bold mr-1">b)</span> {group.b.text}
+                    </div>
+                    {group.b.images && group.b.images.length > 0 && (
+                      <div className="mt-2 mb-1 flex flex-col items-center gap-2">
+                        {group.b.images.map((imgSrc, imgIdx) => (
+                          <img
+                            key={imgIdx}
+                            src={imgSrc}
+                            alt={`Diagram for question ${group.q_no}b`}
+                            className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="w-14 text-center">{group.b.co}</div>
                   <div className="w-14 text-center">{group.b.marks}</div>
@@ -177,7 +219,21 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10 text-center font-bold">{group.q_no}.</div>
                   <div className="flex-1 pr-3">
-                    <span className="font-bold mr-1">a)</span> {group.a.text}
+                    <div>
+                      <span className="font-bold mr-1">a)</span> {group.a.text}
+                    </div>
+                    {group.a.images && group.a.images.length > 0 && (
+                      <div className="mt-2 mb-1 flex flex-col items-center gap-2">
+                        {group.a.images.map((imgSrc, imgIdx) => (
+                          <img
+                            key={imgIdx}
+                            src={imgSrc}
+                            alt={`Diagram for question ${group.q_no}a`}
+                            className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="w-14 text-center">{group.a.co}</div>
                   <div className="w-14 text-center">{group.a.marks}</div>
@@ -193,7 +249,21 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10"></div>
                   <div className="flex-1 pr-3">
-                    <span className="font-bold mr-1">b)</span> {group.b.text}
+                    <div>
+                      <span className="font-bold mr-1">b)</span> {group.b.text}
+                    </div>
+                    {group.b.images && group.b.images.length > 0 && (
+                      <div className="mt-2 mb-1 flex flex-col items-center gap-2">
+                        {group.b.images.map((imgSrc, imgIdx) => (
+                          <img
+                            key={imgIdx}
+                            src={imgSrc}
+                            alt={`Diagram for question ${group.q_no}b`}
+                            className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="w-14 text-center">{group.b.co}</div>
                   <div className="w-14 text-center">{group.b.marks}</div>

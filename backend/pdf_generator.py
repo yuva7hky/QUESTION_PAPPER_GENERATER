@@ -11,45 +11,101 @@ JIT examination paper format:
   - EXAMCELL footer & K-level legend
 """
 
-from reportlab.lib import colors
+import os
+import uuid
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
-)
+from reportlab.pdfgen import canvas
+from PIL import Image as PILImage
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def generate_pdf(paper_data, output_path):
+def _resolve_local_path(img_url, base_dir=BASE_DIR):
+    """Convert relative URL /api/images/<file_id>/<filename> to local disk path."""
+    if not img_url:
+        return None
+    if img_url.startswith('/api/images/'):
+        rel_path = img_url.replace('/api/images/', '').lstrip('/')
+        return os.path.join(base_dir, 'uploads', 'images', rel_path)
+    return img_url
+
+
+def _make_question_cell(text_markup, images, styles, base_dir=BASE_DIR, max_w=310, max_h=220):
+    """Create cell content containing question text and any associated diagram flowables."""
+    flowables = [Paragraph(text_markup, styles['CellText'])]
+    if images:
+        for img_url in images:
+            local_path = _resolve_local_path(img_url, base_dir)
+            if local_path and os.path.exists(local_path):
+                try:
+                    with PILImage.open(local_path) as pil_img:
+                        w, h = pil_img.size
+                    if w > 0 and h > 0:
+                        scale = min(float(max_w) / float(w), float(max_h) / float(h), 1.0)
+                        scaled_w = max(100.0, w * scale)
+                        scaled_h = max(40.0, h * scale)
+                        img_flowable = RLImage(local_path, width=scaled_w, height=scaled_h)
+                        img_flowable.hAlign = 'CENTER'
+                        flowables.append(Spacer(1, 3))
+                        flowables.append(img_flowable)
+                        flowables.append(Spacer(1, 3))
+                except Exception as e:
+                    print(f"Warning: Could not embed image {local_path} in PDF: {e}")
+    if len(flowables) == 1:
+        return flowables[0]
+    return flowables
+
+
+def generate_pdf(paper_data, output_path=None):
     """
-    Generate a PDF question paper matching the printed JIT exam paper.
+    Generate a PDF question paper matching the printed JIT exam paper style.
     
     Args:
-        paper_data: Complete paper dict from generator.generate_paper()
-        output_path: Path to write the PDF file
+        paper_data: Paper dictionary from generator.generate_paper()
+        output_path: Path to save the generated PDF file. If None, auto-generates in 'generated/'.
+        
+    Returns:
+        Path to generated PDF file.
     """
+    metadata = paper_data.get('metadata', {})
+    course_outcomes = paper_data.get('course_outcomes', [])
+    part_a = paper_data.get('part_a')
+    part_b = paper_data.get('part_b')
+    part_c = paper_data.get('part_c')
+
+    exam_type = metadata.get('exam_type', 'CIE I')
+    month_year = metadata.get('month_year', 'JULY 2026')
+    paper_id = paper_data.get('paper_id', str(uuid.uuid4())[:8])
+
+    if not output_path:
+        out_dir = os.path.join(BASE_DIR, 'generated')
+        os.makedirs(out_dir, exist_ok=True)
+        filename = f"Question_Paper_{paper_id}.pdf"
+        output_path = os.path.join(out_dir, filename)
+
+    # ── Canvas / Page Setup ──
+    # Margins: Left=0.6 in, Right=0.6 in, Top=0.6 in, Bottom=0.6 in
+    margin = 0.6 * inch
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
-        topMargin=0.4 * inch,
-        bottomMargin=0.4 * inch,
-        leftMargin=0.5 * inch,
-        rightMargin=0.5 * inch,
+        leftMargin=margin,
+        rightMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
     )
 
     styles = _create_styles()
     elements = []
 
-    metadata = paper_data.get('metadata', {})
-    course_outcomes = paper_data.get('course_outcomes', [])
-    part_a = paper_data.get('part_a', {})
-    part_b = paper_data.get('part_b', {})
-    part_c = paper_data.get('part_c', {})
-
     # ── Top Section: Reg No (top right) ───────────────────
-    reg_data = [['Reg No', '', '', '', '', '', '', '', '', '', '']]
-    reg_table = Table(reg_data, colWidths=[45] + [16] * 10)
+    reg_data = [['Reg No'] + [''] * 12]
+    reg_table = Table(reg_data, colWidths=[45] + [16] * 12)
     reg_table.setStyle(TableStyle([
         ('BOX', (1, 0), (-1, 0), 1, colors.black),
         ('INNERGRID', (1, 0), (-1, 0), 1, colors.black),
@@ -62,7 +118,7 @@ def generate_pdf(paper_data, output_path):
     ]))
     
     # Outer wrapper to right-align reg_table
-    wrap_table = Table([[Paragraph('', styles['MetaText']), reg_table]], colWidths=[doc.width - 205, 205])
+    wrap_table = Table([[Paragraph('', styles['MetaText']), reg_table]], colWidths=[doc.width - 237, 237])
     wrap_table.setStyle(TableStyle([
         ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),

@@ -56,8 +56,6 @@ def _select_cie_i(parsed_data):
 
     all_a_q_nos = sorted(part_a_data['questions'].keys())
     selected_a_q_nos = random.sample(all_a_q_nos, min(5, len(all_a_q_nos)))
-    selected_a_q_nos.sort()
-
     for new_q_no, orig_q_no in enumerate(selected_a_q_nos, 1):
         alternatives = part_a_data['questions'][orig_q_no]
         if not alternatives:
@@ -70,6 +68,7 @@ def _select_cie_i(parsed_data):
             'co': chosen['co'],
             'marks': part_a_marks,
             'alt_index': chosen['alt_index'],
+            'images': chosen.get('images', []),
         })
 
     # ── Part B: pick 2 question groups, then 1 alternative per sub-part ──
@@ -99,6 +98,7 @@ def _select_cie_i(parsed_data):
                 'co': chosen_a['co'],
                 'marks': part_b_marks,
                 'alt_index': chosen_a['alt_index'],
+                'images': chosen_a.get('images', []),
             },
             'b': {
                 'text': chosen_b['text'],
@@ -106,6 +106,7 @@ def _select_cie_i(parsed_data):
                 'co': chosen_b['co'],
                 'marks': part_b_marks,
                 'alt_index': chosen_b['alt_index'],
+                'images': chosen_b.get('images', []),
             },
         })
 
@@ -136,6 +137,7 @@ def _select_cie_i(parsed_data):
                     'co': chosen_a['co'],
                     'marks': part_c_marks,
                     'alt_index': chosen_a['alt_index'],
+                    'images': chosen_a.get('images', []),
                 },
                 'b': {
                     'text': chosen_b['text'],
@@ -143,11 +145,12 @@ def _select_cie_i(parsed_data):
                     'co': chosen_b['co'],
                     'marks': part_c_marks,
                     'alt_index': chosen_b['alt_index'],
+                    'images': chosen_b.get('images', []),
                 },
             })
 
     return {
-        'metadata': parsed_data['metadata'],
+        'metadata': dict(parsed_data['metadata']),
         'course_outcomes': parsed_data['course_outcomes'],
         'part_a': {
             'config': '5 x 2 = 10 Marks',
@@ -193,6 +196,7 @@ def _select_model(parsed_data):
             'co': chosen['co'],
             'marks': part_a_marks,
             'alt_index': chosen['alt_index'],
+            'images': chosen.get('images', []),
         })
 
     # ── Part B: 5 question groups x 13 marks = 65 marks ──
@@ -218,6 +222,7 @@ def _select_model(parsed_data):
                 'co': chosen_a['co'],
                 'marks': part_b_marks,
                 'alt_index': chosen_a['alt_index'],
+                'images': chosen_a.get('images', []),
             },
             'b': {
                 'text': chosen_b['text'],
@@ -225,6 +230,7 @@ def _select_model(parsed_data):
                 'co': chosen_b['co'],
                 'marks': part_b_marks,
                 'alt_index': chosen_b['alt_index'],
+                'images': chosen_b.get('images', []),
             },
         })
 
@@ -253,6 +259,7 @@ def _select_model(parsed_data):
                     'co': chosen_a['co'],
                     'marks': part_c_marks,
                     'alt_index': chosen_a['alt_index'],
+                    'images': chosen_a.get('images', []),
                 },
                 'b': {
                     'text': chosen_b['text'],
@@ -260,6 +267,7 @@ def _select_model(parsed_data):
                     'co': chosen_b['co'],
                     'marks': part_c_marks,
                     'alt_index': chosen_b['alt_index'],
+                    'images': chosen_b.get('images', []),
                 },
             })
 

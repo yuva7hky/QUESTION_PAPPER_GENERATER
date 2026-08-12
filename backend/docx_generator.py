@@ -5,19 +5,60 @@ Uses python-docx to create a Word document matching the official
 JIT examination paper format (borderless clean text layout matching PDF).
 """
 
+import os
+import uuid
 from docx import Document
-from docx.shared import Pt, Cm
+from docx.shared import Pt, Inches, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
+from PIL import Image as PILImage
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Column widths matching PDF A4 layout (Total = 18.0 cm)
 QUESTION_COL_WIDTHS = [Cm(1.2), Cm(12.5), Cm(1.4), Cm(1.4), Cm(1.5)]
 
 
-def generate_docx(paper_data, output_path):
+def _resolve_local_path(img_url, base_dir=BASE_DIR):
+    """Convert relative URL /api/images/<file_id>/<filename> to local disk path."""
+    if not img_url:
+        return None
+    if img_url.startswith('/api/images/'):
+        rel_path = img_url.replace('/api/images/', '').lstrip('/')
+        return os.path.join(base_dir, 'uploads', 'images', rel_path)
+    return img_url
+
+
+def _insert_question_images(cell, images, base_dir=BASE_DIR, max_cm=11.0):
+    """Insert images associated with a question into a Word table cell."""
+    if not images:
+        return
+    for img_url in images:
+        local_path = _resolve_local_path(img_url, base_dir)
+        if local_path and os.path.exists(local_path):
+            try:
+                with PILImage.open(local_path) as pil_img:
+                    w, h = pil_img.size
+                if w > 0:
+                    orig_w_cm = w / 37.795
+                    target_w_cm = min(max_cm, orig_w_cm)
+                    target_w_cm = max(2.5, target_w_cm)
+                else:
+                    target_w_cm = 8.0
+                
+                p = cell.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_before = Pt(3)
+                p.paragraph_format.space_after = Pt(3)
+                run = p.add_run()
+                run.add_picture(local_path, width=Cm(target_w_cm))
+            except Exception as e:
+                print(f"Warning: Could not insert image {local_path} into DOCX: {e}")
+
+
+def generate_docx(paper_data, output_path=None):
     """
     Generate a DOCX question paper matching the printed JIT exam paper and PDF export.
     
@@ -25,6 +66,13 @@ def generate_docx(paper_data, output_path):
         paper_data: Complete paper dict from generator.generate_paper()
         output_path: Path to write the DOCX file
     """
+    if not output_path:
+        out_dir = os.path.join(BASE_DIR, 'generated')
+        os.makedirs(out_dir, exist_ok=True)
+        paper_id = paper_data.get('paper_id', str(uuid.uuid4())[:8])
+        filename = f"Question_Paper_{paper_id}.docx"
+        output_path = os.path.join(out_dir, filename)
+
     doc = Document()
 
     # ── Page Setup (Margins match PDF) ────────────────────
@@ -41,7 +89,7 @@ def generate_docx(paper_data, output_path):
     part_c = paper_data.get('part_c', {})
 
     # ── Register Number Box (Top Right) ───────────────────
-    reg_table = doc.add_table(rows=1, cols=11)
+    reg_table = doc.add_table(rows=1, cols=13)
     reg_table.alignment = WD_TABLE_ALIGNMENT.RIGHT
     _remove_table_borders(reg_table)
     
@@ -49,7 +97,7 @@ def generate_docx(paper_data, output_path):
     reg_cell_0.paragraphs[0].text = "Reg No"
     _set_font(reg_cell_0.paragraphs[0].runs[0], bold=True, size=11)
 
-    for i in range(1, 11):
+    for i in range(1, 13):
         cell = reg_table.cell(0, i)
         _set_single_cell_border(cell)
         cell.width = Cm(0.5)

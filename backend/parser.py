@@ -10,6 +10,7 @@ Reads a .docx file containing a single-table Question Bank and extracts:
   - Marks distribution from section headers
 """
 
+import os
 import re
 from docx import Document
 
@@ -73,25 +74,29 @@ SEM_MAP = {
 }
 
 
-def parse_question_bank(filepath):
+def parse_question_bank(filepath, file_id=None):
     """
     Parse a Question Bank .docx file.
     
     Args:
         filepath: Path to the .docx file.
+        file_id: Optional unique identifier for storing extracted images.
     
     Returns:
-        dict with keys:
-            metadata: { su00, su01, br00, yr00, se00, subject_code, subject_name, branch, semester, branch_info }
-            course_outcomes: [ { id, text } ]
-            part_a: { config, questions: { q_no: [ { text, k_level, co, alt_index } ] } }
-            part_b: { config, questions: { q_no: { a: [...], b: [...] } } }
-            part_c: { config, questions: { q_no: { a: [...], b: [...] } } }
+        dict with metadata, course outcomes, and question sections with associated images.
     """
+    if not file_id:
+        file_id = os.path.splitext(os.path.basename(filepath))[0]
+
     doc = Document(filepath)
 
     if not doc.tables:
         raise ValueError("No tables found in the document. Expected a table-based Question Bank.")
+
+    # Image storage directory for this file
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    img_dir = os.path.join(base_dir, 'uploads', 'images', file_id)
+    os.makedirs(img_dir, exist_ok=True)
 
     table = doc.tables[0]
     rows = []
@@ -127,14 +132,14 @@ def parse_question_bank(filepath):
 
     # ── Parse Part A ──────────────────────────────────────
     part_a_end = part_b_start if part_b_start else len(rows)
-    part_a_questions = _parse_part_a(rows, part_a_start, part_a_end)
+    part_a_questions = _parse_part_a(table, part_a_start, part_a_end, doc, file_id, img_dir)
 
     # ── Parse Part B ──────────────────────────────────────
     part_b_end = part_c_start if part_c_start else len(rows)
-    part_b_questions = _parse_part_bc(rows, part_b_start, part_b_end)
+    part_b_questions = _parse_part_bc(table, part_b_start, part_b_end, doc, file_id, img_dir)
 
     # ── Parse Part C ──────────────────────────────────────
-    part_c_questions = _parse_part_bc(rows, part_c_start, len(rows))
+    part_c_questions = _parse_part_bc(table, part_c_start, len(rows), doc, file_id, img_dir)
 
     # ── Determine marks per question ──────────────────────
     part_a_marks = _extract_marks_per_question(part_a_config)
@@ -160,6 +165,26 @@ def parse_question_bank(filepath):
             'questions': part_c_questions,
         },
     }
+
+
+def _extract_row_images(row, r_idx, doc, file_id, img_dir):
+    """Extract embedded images from a table row XML and save to disk."""
+    xml_str = row._element.xml
+    rids = re.findall(r'(?:r:embed|r:id|r:link)="([^"]+)"', xml_str)
+    extracted_urls = []
+    for rid in rids:
+        if rid in doc.part.rels and 'image' in doc.part.rels[rid].target_ref.lower():
+            part = doc.part.rels[rid].target_part
+            ext = os.path.splitext(part.filename)[1] or '.png'
+            filename = f"img_{r_idx}_{rid}{ext}"
+            disk_path = os.path.join(img_dir, filename)
+            if not os.path.exists(disk_path):
+                with open(disk_path, 'wb') as f:
+                    f.write(part.blob)
+            url = f"/api/images/{file_id}/{filename}"
+            if url not in extracted_urls:
+                extracted_urls.append(url)
+    return extracted_urls
 
 
 def _extract_metadata(rows):
@@ -290,27 +315,37 @@ def _extract_marks_per_question(config):
     return 0
 
 
-def _parse_part_a(rows, start_idx, end_idx):
+def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir):
     """Parse Part A questions into dictionary grouped by question number."""
     questions = {}
     if start_idx is None:
         return questions
 
-    for row in rows[start_idx + 1:end_idx]:
-        if len(row) < 3:
+    last_q = None
+
+    for r_idx in range(start_idx + 1, end_idx):
+        row = table.rows[r_idx]
+        cells = [cell.text.strip() for cell in row.cells]
+        if len(cells) < 3:
             continue
 
-        q_no_raw = row[0].strip()
-        alt_raw = row[1].strip() if len(row) > 1 else '1'
-        text = row[2].strip() if len(row) > 2 else ''
-        k_level = row[3].strip() if len(row) > 3 else ''
-        co = row[4].strip() if len(row) > 4 else ''
+        row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir)
 
-        if not text:
-            continue
+        q_no_raw = cells[0].strip()
+        alt_raw = cells[1].strip() if len(cells) > 1 else '1'
+        text = cells[2].strip() if len(cells) > 2 else ''
+        k_level = cells[3].strip() if len(cells) > 3 else ''
+        co = cells[4].strip() if len(cells) > 4 else ''
 
         q_match = re.search(r'(\d+)', q_no_raw)
         if not q_match:
+            if row_imgs and last_q:
+                for img_url in row_imgs:
+                    if img_url not in last_q['images']:
+                        last_q['images'].append(img_url)
+            continue
+
+        if not text and not row_imgs:
             continue
 
         q_no = int(q_match.group(1))
@@ -319,43 +354,55 @@ def _parse_part_a(rows, start_idx, end_idx):
         if q_no not in questions:
             questions[q_no] = []
 
-        questions[q_no].append({
+        q_obj = {
             'text': text,
             'k_level': k_level,
             'co': co,
             'alt_index': alt_idx,
-        })
+            'images': list(row_imgs),
+        }
+        questions[q_no].append(q_obj)
+        last_q = q_obj
 
     return questions
 
 
-def _parse_part_bc(rows, start_idx, end_idx):
+def _parse_part_bc(table, start_idx, end_idx, doc, file_id, img_dir):
     """Parse Part B or Part C questions into dictionary grouped by question number and sub-part (a/b)."""
     questions = {}
     if start_idx is None:
         return questions
 
     current_q_no = None
+    last_q_sub = None
 
-    for row in rows[start_idx + 1:end_idx]:
-        if len(row) < 3:
+    for r_idx in range(start_idx + 1, end_idx):
+        row = table.rows[r_idx]
+        cells = [cell.text.strip() for cell in row.cells]
+        if len(cells) < 3:
             continue
 
-        q_no_raw = row[0].strip()
-        alt_raw = row[1].strip() if len(row) > 1 else '1'
-        text = row[2].strip() if len(row) > 2 else ''
-        k_level = row[3].strip() if len(row) > 3 else ''
-        co = row[4].strip() if len(row) > 4 else ''
-        sub_part_raw = row[5].strip() if len(row) > 5 else ''
+        row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir)
 
-        if not text:
-            continue
+        q_no_raw = cells[0].strip()
+        alt_raw = cells[1].strip() if len(cells) > 1 else '1'
+        text = cells[2].strip() if len(cells) > 2 else ''
+        k_level = cells[3].strip() if len(cells) > 3 else ''
+        co = cells[4].strip() if len(cells) > 4 else ''
+        sub_part_raw = cells[5].strip() if len(cells) > 5 else ''
 
         q_match = re.search(r'(\d+)', q_no_raw)
         if q_match:
             current_q_no = int(q_match.group(1))
 
         if not current_q_no:
+            if row_imgs and last_q_sub:
+                for img_url in row_imgs:
+                    if img_url not in last_q_sub['images']:
+                        last_q_sub['images'].append(img_url)
+            continue
+
+        if not text and not row_imgs:
             continue
 
         sub_match = re.search(r'([abAB])', q_no_raw + ' ' + sub_part_raw)
@@ -365,11 +412,14 @@ def _parse_part_bc(rows, start_idx, end_idx):
         if current_q_no not in questions:
             questions[current_q_no] = {'a': [], 'b': []}
 
-        questions[current_q_no][sub_part].append({
+        q_obj = {
             'text': text,
             'k_level': k_level,
             'co': co,
             'alt_index': alt_idx,
-        })
+            'images': list(row_imgs),
+        }
+        questions[current_q_no][sub_part].append(q_obj)
+        last_q_sub = q_obj
 
     return questions
