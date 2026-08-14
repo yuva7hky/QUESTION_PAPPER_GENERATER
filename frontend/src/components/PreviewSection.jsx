@@ -25,15 +25,15 @@ function stripLatexDelimiters(latex) {
  */
 function renderLatexToHtml(latex) {
   const cleaned = stripLatexDelimiters(latex);
-  if (!cleaned) return '';
+  if (!cleaned) return null;
   try {
     return katex.renderToString(cleaned, {
-      throwOnError: false,
+      throwOnError: true,
       displayMode: false,
       output: 'html',
     });
   } catch {
-    return `<span>${latex}</span>`;
+    return null;
   }
 }
 
@@ -54,13 +54,16 @@ function renderTextWithLatex(text) {
       {parts.map((part, idx) => {
         if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
           const html = renderLatexToHtml(part);
-          return (
-            <span
-              key={idx}
-              className="katex-inline"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
-          );
+          if (html) {
+            return (
+              <span
+                key={idx}
+                className="katex-inline"
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            );
+          }
+          return <span key={idx}>{part}</span>;
         }
         return <span key={idx}>{part}</span>;
       })}
@@ -81,26 +84,37 @@ function renderQuestionContent(q, prefix = '') {
             return <span key={idx}>{renderTextWithLatex(item.value)}</span>;
           } else if (item.type === 'equation') {
             const latex = item.latex;
-            if (latex) {
-              const html = renderLatexToHtml(latex);
+            const html = latex ? renderLatexToHtml(latex) : null;
+            if (html) {
               return (
                 <span
                   key={idx}
-                  className="katex-inline"
+                  className="katex-inline mx-0.5"
                   dangerouslySetInnerHTML={{ __html: html }}
                 />
               );
             }
-            // Fallback to equation image if no latex
-            return (
-              <img
-                key={idx}
-                src={item.url}
-                alt={item.latex || 'Math Equation'}
-                className="inline-block align-middle mx-1 my-0"
-                style={{ height: '1.25em', verticalAlign: '-0.25em' }}
-              />
-            );
+            // Fallback to equation image if no latex or katex render failed
+            if (item.url) {
+              const isTall = item.is_block || (item.height_pt && item.height_pt > 22);
+              return (
+                <img
+                  key={idx}
+                  src={item.url}
+                  alt={item.latex || 'Math Equation'}
+                  className="inline-block align-middle mx-1 my-0 object-contain"
+                  style={
+                    isTall
+                      ? { maxHeight: '2.8em', height: 'auto', verticalAlign: 'middle' }
+                      : { height: '1.15em', verticalAlign: '-0.15em' }
+                  }
+                />
+              );
+            }
+            if (latex) {
+              return <span key={idx}>${latex}$</span>;
+            }
+            return null;
           }
           return null;
         })}

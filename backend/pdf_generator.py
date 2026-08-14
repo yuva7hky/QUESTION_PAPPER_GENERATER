@@ -59,12 +59,25 @@ def _build_pdf_markup(q_or_text, prefix=""):
                 elif item['type'] == 'equation':
                     local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
                     if local_path and os.path.exists(local_path):
-                        ar = item.get('aspect_ratio', 1.0)
-                        h_pt = 12.0
-                        w_pt = h_pt * ar
-                        parts.append(f" <img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='middle'/> ")
+                        ar = float(item.get('aspect_ratio') or 1.0)
+                        orig_h = float(item.get('height_pt') or 14.0)
+                        orig_w = float(item.get('width_pt') or (orig_h * ar))
+                        is_block = item.get('is_block', False) or (orig_h > 22.0)
+                        
+                        # In PDF, CellText fontSize is 8.5 pt with 11 pt leading
+                        if is_block:
+                            # Matrix / multiline / block formula
+                            h_pt = min(orig_h * (8.5 / 11.0), 42.0)
+                            w_pt = min(max(h_pt * ar, orig_w * (8.5 / 11.0)), 310.0)
+                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='middle'/>")
+                        else:
+                            # Inline single-line formula
+                            h_pt = max(8.0, min(orig_h * (8.5 / 11.0), 10.5))
+                            w_pt = max(5.0, min(h_pt * ar, 260.0))
+                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='-1.5'/>")
                     else:
-                        parts.append(f" ${html_escape(item.get('latex', ''))}$ ")
+                        latex = item.get('latex', '')
+                        parts.append(f" ${html_escape(latex)}$ " if latex else " [Equation] ")
             return "".join(parts)
         else:
             return prefix + html_escape(q_or_text.get('text', ''))

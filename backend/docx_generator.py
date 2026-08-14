@@ -367,23 +367,30 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
             elif item['type'] == 'equation':
                 omml_xml = item.get('omml')
                 inserted = False
-                if omml_xml:
+                if omml_xml and not item.get('is_legacy_ole'):
                     try:
                         omath_elem = parse_xml(omml_xml)
                         p._p.append(omath_elem)
                         inserted = True
                     except Exception as e:
                         print(f"Warning: Could not parse OMML XML into DOCX: {e}")
-                
+
                 if not inserted:
                     local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
                     if local_path and os.path.exists(local_path):
                         try:
+                            orig_h = float(item.get('height_pt') or 14.0)
+                            is_block = item.get('is_block', False) or (orig_h > 22.0)
+                            if is_block:
+                                h_pt = min(orig_h * 0.85, 45.0)
+                            else:
+                                h_pt = max(9.0, min(orig_h * 0.85, 12.0))
                             run = p.add_run()
-                            run.add_picture(local_path, height=Pt(11))
+                            run.add_picture(local_path, height=Pt(h_pt))
                         except Exception as e:
                             print(f"Warning: Could not insert equation image into DOCX: {e}")
-                            run = p.add_run(f" ${item.get('latex', '')}$ ")
+                            latex = item.get('latex', '')
+                            run = p.add_run(f" ${latex}$ " if latex else " [Equation] ")
                             _set_font(run, bold=bold, size=11)
     else:
         text = q_or_text.get('text', '') if isinstance(q_or_text, dict) else str(q_or_text)

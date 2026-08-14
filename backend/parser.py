@@ -8,11 +8,14 @@ Reads a .docx file containing a single-table Question Bank and extracts:
   - Part B questions grouped by question number and sub-part (a/b)
   - Part C questions (same structure as Part B)
   - Marks distribution from section headers
+  - Inline mathematical equations (modern OMML and legacy Equation Editor 3.0 / MathType)
+  - Embedded diagrams and images
 """
 
 import os
 import re
 import xml.etree.ElementTree as ET
+from io import BytesIO
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -88,7 +91,7 @@ def parse_question_bank(filepath, file_id=None):
         file_id: Optional unique identifier for storing extracted images.
     
     Returns:
-        dict with metadata, course outcomes, and question sections with associated images.
+        dict with metadata, course outcomes, and question sections with associated images and equations.
     """
     if not file_id:
         file_id = os.path.splitext(os.path.basename(filepath))[0]
@@ -174,12 +177,42 @@ def parse_question_bank(filepath, file_id=None):
     }
 
 
-def _extract_row_images(row, r_idx, doc, file_id, img_dir):
-    """Extract embedded images from a table row XML and save to disk."""
+def _extract_row_equation_rids(row):
+    """
+    Find all relationship IDs that belong to legacy equation objects in a row.
+    These IDs should NOT be treated as regular question diagrams.
+    """
+    equation_rids = set()
+    for obj in row._element.xpath('.//w:object'):
+        ole = obj.find('.//{urn:schemas-microsoft-com:office:office}OLEObject')
+        imgd = obj.find('.//{urn:schemas-microsoft-com:vml}imagedata')
+        prog = ole.attrib.get('ProgID', '') if ole is not None else ''
+        if 'equation' in prog.lower() or 'mathtype' in prog.lower() or 'dsmt' in prog.lower() or imgd is not None:
+            if imgd is not None:
+                for k, v in imgd.attrib.items():
+                    if 'id' in k.lower():
+                        equation_rids.add(v)
+            if ole is not None:
+                for k, v in ole.attrib.items():
+                    if 'id' in k.lower():
+                        equation_rids.add(v)
+    return equation_rids
+
+
+def _extract_row_images(row, r_idx, doc, file_id, img_dir, equation_rids=None):
+    """
+    Extract embedded normal question images from a table row XML and save to disk.
+    Explicitly excludes equation objects so normal question images remain distinct.
+    """
+    if equation_rids is None:
+        equation_rids = _extract_row_equation_rids(row)
+
     xml_str = row._element.xml
     rids = re.findall(r'(?:r:embed|r:id|r:link)="([^"]+)"', xml_str)
     extracted_urls = []
     for rid in rids:
+        if rid in equation_rids:
+            continue
         if rid in doc.part.rels and 'image' in doc.part.rels[rid].target_ref.lower():
             part = doc.part.rels[rid].target_part
             ext = os.path.splitext(part.filename)[1] or '.png'
@@ -322,12 +355,213 @@ def _extract_marks_per_question(config):
     return 0
 
 
+def _parse_shape_style_dimensions(style_str):
+    """Extract width_pt and height_pt from shape style string like 'width:120.75pt;height:18pt'."""
+    w_pt, h_pt = None, None
+    if not style_str:
+        return w_pt, h_pt
+
+    w_match = re.search(r'width\s*:\s*([\d.]+)\s*(pt|in|cm|mm|px)?', style_str, re.IGNORECASE)
+    if w_match:
+        val = float(w_match.group(1))
+        unit = (w_match.group(2) or 'pt').lower()
+        if unit == 'in': w_pt = val * 72.0
+        elif unit == 'cm': w_pt = val * 28.3465
+        elif unit == 'mm': w_pt = val * 2.83465
+        elif unit == 'px': w_pt = val * 0.75
+        else: w_pt = val
+
+    h_match = re.search(r'height\s*:\s*([\d.]+)\s*(pt|in|cm|mm|px)?', style_str, re.IGNORECASE)
+    if h_match:
+        val = float(h_match.group(1))
+        unit = (h_match.group(2) or 'pt').lower()
+        if unit == 'in': h_pt = val * 72.0
+        elif unit == 'cm': h_pt = val * 28.3465
+        elif unit == 'mm': h_pt = val * 2.83465
+        elif unit == 'px': h_pt = val * 0.75
+        else: h_pt = val
+
+    return w_pt, h_pt
+
+
+import ctypes
+from ctypes import wintypes
+from PIL import Image as PILImage, ImageChops
+
+# ── Windows GDI+ High-Fidelity WMF/EMF Vector Rasterizer ────────
+_gdiplus = None
+_gdiplus_available = False
+
+try:
+    if os.name == 'nt':
+        _gdiplus = ctypes.windll.gdiplus
+        class _GdiplusStartupInput(ctypes.Structure):
+            _fields_ = [
+                ('GdiplusVersion', wintypes.UINT),
+                ('DebugEventCallback', ctypes.c_void_p),
+                ('SuppressBackgroundThread', wintypes.BOOL),
+                ('SuppressExternalCodecs', wintypes.BOOL)
+            ]
+        class _CLSID(ctypes.Structure):
+            _fields_ = [
+                ('Data1', wintypes.DWORD),
+                ('Data2', wintypes.WORD),
+                ('Data3', wintypes.WORD),
+                ('Data4', ctypes.c_ubyte * 8)
+            ]
+        _token = ctypes.c_ulong()
+        _startup_in = _GdiplusStartupInput(1, None, False, False)
+        _st = _gdiplus.GdiplusStartup(ctypes.byref(_token), ctypes.byref(_startup_in), None)
+        if _st == 0:
+            _gdiplus.GdipLoadImageFromFile.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_void_p)]
+            _gdiplus.GdipGetImageDimension.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
+            _gdiplus.GdipCreateBitmapFromScan0.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+            _gdiplus.GdipGetImageGraphicsContext.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+            _gdiplus.GdipGraphicsClear.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            _gdiplus.GdipSetSmoothingMode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            _gdiplus.GdipSetInterpolationMode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            _gdiplus.GdipSetTextRenderingHint.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            _gdiplus.GdipDrawImageRectRect.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+            ]
+            _gdiplus.GdipSaveImageToFile.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.POINTER(_CLSID), ctypes.c_void_p]
+            _gdiplus.GdipDeleteGraphics.argtypes = [ctypes.c_void_p]
+            _gdiplus.GdipDisposeImage.argtypes = [ctypes.c_void_p]
+            _png_clsid = _CLSID(0x557CF406, 0x1A04, 0x11D3, (ctypes.c_ubyte * 8)(0x9A, 0x73, 0x00, 0x00, 0xF8, 0x1E, 0xF3, 0x2E))
+            _gdiplus_available = True
+except Exception as e:
+    _gdiplus_available = False
+
+
+def _trim_white_borders(img, padding=2):
+    """Trim excess whitespace around rendered equation image."""
+    try:
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        bg = PILImage.new('RGB', img.size, (255, 255, 255))
+        diff = ImageChops.difference(img, bg)
+        bbox = diff.getbbox()
+        if bbox:
+            left = max(0, bbox[0] - padding)
+            top = max(0, bbox[1] - padding)
+            right = min(img.width, bbox[2] + padding)
+            bottom = min(img.height, bbox[3] + padding)
+            return img.crop((left, top, right, bottom))
+    except Exception:
+        pass
+    return img
+
+
+def _process_equation_ole_image(part_blob, file_id, eq_filename, eq_dir, target_width_pt=None, target_height_pt=None):
+    """
+    Convert legacy Equation Editor 3.0 / MathType image (WMF/EMF/PNG) to a crisp, high-resolution PNG asset.
+    Uses Windows GDI+ for 100% vector accuracy and zero black-bar rasterization artifacts.
+    """
+    os.makedirs(eq_dir, exist_ok=True)
+    out_path = os.path.join(eq_dir, eq_filename)
+    if os.path.exists(out_path):
+        try:
+            with PILImage.open(out_path) as img:
+                return out_path, img.width, img.height
+        except Exception:
+            pass
+
+    # Method 1: High-Fidelity Windows GDI+ Rasterization
+    if _gdiplus_available:
+        try:
+            temp_wmf = out_path + '.tmp.wmf'
+            with open(temp_wmf, 'wb') as f:
+                f.write(part_blob)
+
+            image = ctypes.c_void_p()
+            st = _gdiplus.GdipLoadImageFromFile(ctypes.c_wchar_p(temp_wmf), ctypes.byref(image))
+            if st == 0:
+                width = ctypes.c_float()
+                height = ctypes.c_float()
+                _gdiplus.GdipGetImageDimension(image, ctypes.byref(width), ctypes.byref(height))
+
+                scale = 300.0 / 72.0
+                if target_width_pt and target_height_pt:
+                    w_px = max(10, int(target_width_pt * scale))
+                    h_px = max(10, int(target_height_pt * scale))
+                else:
+                    ar = (width.value / height.value) if height.value > 0 else 1.0
+                    h_px = int(24.0 * scale)
+                    w_px = max(10, int(h_px * ar))
+
+                bitmap = ctypes.c_void_p()
+                _gdiplus.GdipCreateBitmapFromScan0(w_px, h_px, 0, 0x22009, None, ctypes.byref(bitmap))
+
+                graphics = ctypes.c_void_p()
+                _gdiplus.GdipGetImageGraphicsContext(bitmap, ctypes.byref(graphics))
+
+                # Pure white background, anti-aliased
+                _gdiplus.GdipGraphicsClear(graphics, ctypes.c_uint(0xFFFFFFFF))
+                _gdiplus.GdipSetSmoothingMode(graphics, 2)
+                _gdiplus.GdipSetInterpolationMode(graphics, 7)
+                _gdiplus.GdipSetTextRenderingHint(graphics, 4)
+
+                _gdiplus.GdipDrawImageRectRect(
+                    graphics, image,
+                    0.0, 0.0, float(w_px), float(h_px),
+                    0.0, 0.0, width.value, height.value,
+                    2, None, None, None
+                )
+
+                _gdiplus.GdipSaveImageToFile(bitmap, ctypes.c_wchar_p(out_path), ctypes.byref(_png_clsid), None)
+                _gdiplus.GdipDeleteGraphics(graphics)
+                _gdiplus.GdipDisposeImage(bitmap)
+                _gdiplus.GdipDisposeImage(image)
+
+                if os.path.exists(temp_wmf):
+                    os.remove(temp_wmf)
+
+                # Auto-trim excess white borders
+                with PILImage.open(out_path) as rendered_img:
+                    trimmed = _trim_white_borders(rendered_img)
+                    trimmed.save(out_path, format='PNG')
+                    return out_path, trimmed.width, trimmed.height
+        except Exception as e:
+            print(f"Warning: GDI+ WMF render exception: {e}")
+            if os.path.exists(temp_wmf):
+                try: os.remove(temp_wmf)
+                except Exception: pass
+
+    # Method 2: Pillow Fallback with white background
+    try:
+        img = PILImage.open(BytesIO(part_blob))
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        trimmed = _trim_white_borders(img)
+        trimmed.save(out_path, format='PNG')
+        return out_path, trimmed.width, trimmed.height
+    except Exception as e:
+        print(f"Warning: Failed to convert legacy OLE equation image: {e}")
+        return None, 0, 0
+
+
 def omml_to_latex(elem):
+    """
+    Convert Word OMML math XML element to LaTeX string.
+    Supports matrices, delimiters, fractions, superscripts, subscripts, radicals, n-ary sums/integrals, functions.
+    """
     tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
     
-    if tag in ('oMath', 'oMathPara', 'e', 'num', 'den', 'sub', 'sup', 'fName', 'lim'):
+    if tag in ('oMath', 'oMathPara', 'e', 'num', 'den', 'sub', 'sup', 'fName', 'lim', 'deg', 'limLow', 'limUpp'):
         return ''.join(omml_to_latex(child) for child in elem)
     
+    elif tag == 'm':
+        # Matrix representation
+        rows = []
+        for mr in elem.findall('.//{http://schemas.openxmlformats.org/officeDocument/2006/math}mr'):
+            cells = [omml_to_latex(e) for e in mr.findall('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')]
+            rows.append(' & '.join(cells))
+        matrix_body = ' \\\\ '.join(rows)
+        return f'\\begin{{matrix}} {matrix_body} \\end{{matrix}}'
+
     elif tag == 'r':
         text = ''
         for child in elem:
@@ -335,129 +569,144 @@ def omml_to_latex(elem):
             if ctag == 't':
                 text += child.text or ''
         replacements = {
-            '…': r'\dots',
-            '∞': r'\infty',
-            '∑': r'\sum ',
-            'π': r'\pi ',
-            'α': r'\alpha ', 'β': r'\beta ', 'θ': r'\theta ', 'λ': r'\lambda ',
-            '≤': r'\le ', '≥': r'\ge ', '≠': r'\ne ', '×': r'\times ', '÷': r'\div ', '±': r'\pm '
+            '…': r'\dots ', '∞': r'\infty ', '∑': r'\sum ', 'π': r'\pi ', '∏': r'\prod ',
+            'α': r'\alpha ', 'β': r'\beta ', 'γ': r'\gamma ', 'δ': r'\delta ', 'ε': r'\epsilon ',
+            'θ': r'\theta ', 'λ': r'\lambda ', 'μ': r'\mu ', 'σ': r'\sigma ', 'τ': r'\tau ',
+            'φ': r'\phi ', 'ω': r'\omega ', 'Δ': r'\Delta ', 'Σ': r'\Sigma ', 'Ω': r'\Omega ',
+            '≤': r'\le ', '≥': r'\ge ', '≠': r'\ne ', '×': r'\times ', '÷': r'\div ', '±': r'\pm ',
+            '≈': r'\approx ', '∈': r'\in ', '∉': r'\notin ', '→': r'\to ', '←': r'\gets ',
+            '⇒': r'\Rightarrow ', '⇔': r'\Leftrightarrow ', '∂': r'\partial ', '∇': r'\nabla ',
+            '∫': r'\int ', '∬': r'\iint ', '∭': r'\iiint ', '·': r'\cdot ', '°': r'^\circ '
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
         return text
 
     elif tag == 'f':
-        num_elem = elem.find('.//{*}num')
-        den_elem = elem.find('.//{*}den')
+        num_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}num')
+        den_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}den')
         num = omml_to_latex(num_elem) if num_elem is not None else ''
         den = omml_to_latex(den_elem) if den_elem is not None else ''
         return f'\\frac{{{num}}}{{{den}}}'
 
     elif tag == 'sSup':
-        e_elem = elem.find('.//{*}e')
-        sup_elem = elem.find('.//{*}sup')
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
+        sup_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sup')
         e_str = omml_to_latex(e_elem) if e_elem is not None else ''
         sup_str = omml_to_latex(sup_elem) if sup_elem is not None else ''
         return f'{{{e_str}}}^{{{sup_str}}}'
 
     elif tag == 'sSub':
-        e_elem = elem.find('.//{*}e')
-        sub_elem = elem.find('.//{*}sub')
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
+        sub_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sub')
         e_str = omml_to_latex(e_elem) if e_elem is not None else ''
         sub_str = omml_to_latex(sub_elem) if sub_elem is not None else ''
         return f'{{{e_str}}}_{{{sub_str}}}'
 
     elif tag == 'sSubSup':
-        e_elem = elem.find('.//{*}e')
-        sub_elem = elem.find('.//{*}sub')
-        sup_elem = elem.find('.//{*}sup')
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
+        sub_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sub')
+        sup_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sup')
         e_str = omml_to_latex(e_elem) if e_elem is not None else ''
         sub_str = omml_to_latex(sub_elem) if sub_elem is not None else ''
         sup_str = omml_to_latex(sup_elem) if sup_elem is not None else ''
         return f'{{{e_str}}}_{{{sub_str}}}^{{{sup_str}}}'
 
     elif tag == 'd':
-        dPr = elem.find('.//{*}dPr')
+        dPr = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}dPr')
         beg_chr = '('
         end_chr = ')'
         if dPr is not None:
-            beg = dPr.find('.//{*}begChr')
-            end = dPr.find('.//{*}endChr')
+            beg = dPr.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}begChr')
+            end = dPr.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}endChr')
             if beg is not None: beg_chr = beg.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', beg_chr)
             if end is not None: end_chr = end.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', end_chr)
-        e_elems = elem.findall('.//{*}e')
+        e_elems = elem.findall('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         inner = ''.join(omml_to_latex(e) for e in e_elems)
-        beg_map = {'(': r'\left(', '[': r'\left[', '{': r'\left\{'}
-        end_map = {')': r'\right)', ']': r'\right]', '}': r'\right\}'}
+        beg_map = {'(': r'\left(', '[': r'\left[', '{': r'\left\{', '|': r'\left|'}
+        end_map = {')': r'\right)', ']': r'\right]', '}': r'\right\}', '|': r'\right|'}
         b_str = beg_map.get(beg_chr, beg_chr)
         e_str = end_map.get(end_chr, end_chr)
         return f'{b_str}{inner}{e_str}'
 
     elif tag == 'nary':
-        naryPr = elem.find('.//{*}naryPr')
+        naryPr = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}naryPr')
         chr_val = '∑'
         if naryPr is not None:
-            c = naryPr.find('.//{*}chr')
+            c = naryPr.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}chr')
             if c is not None: chr_val = c.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', chr_val)
-        sub_elem = elem.find('.//{*}sub')
-        sup_elem = elem.find('.//{*}sup')
-        e_elem = elem.find('.//{*}e')
+        sub_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sub')
+        sup_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sup')
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         sub_str = f'_{{{omml_to_latex(sub_elem)}}}' if sub_elem is not None else ''
         sup_str = f'^{{{omml_to_latex(sup_elem)}}}' if sup_elem is not None else ''
         e_str = omml_to_latex(e_elem) if e_elem is not None else ''
-        op_symbol = r'\sum' if chr_val == '∑' else (r'\int' if chr_val == '∫' else chr_val)
+        op_symbol = r'\sum' if chr_val == '∑' else (r'\int' if chr_val == '∫' else (r'\prod' if chr_val == '∏' else chr_val))
         return f'{op_symbol}{sub_str}{sup_str}{{{e_str}}}'
 
     elif tag == 'func':
-        fname_elem = elem.find('.//{*}fName')
-        e_elem = elem.find('.//{*}e')
+        fname_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}fName')
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         fname_str = omml_to_latex(fname_elem) if fname_elem is not None else ''
         e_str = omml_to_latex(e_elem) if e_elem is not None else ''
         return f'\\{fname_str}{{{e_str}}}'
 
     elif tag == 'rad':
-        deg_elem = elem.find('.//{*}deg')
-        e_elem = elem.find('.//{*}e')
+        deg_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}deg')
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         deg_str = f'[{omml_to_latex(deg_elem)}]' if deg_elem is not None and len(deg_elem) > 0 else ''
         e_str = omml_to_latex(e_elem) if e_elem is not None else ''
         return f'\\sqrt{deg_str}{{{e_str}}}'
+
+    elif tag == 'bar':
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        return f'\\overline{{{e_str}}}'
+
+    elif tag == 'acc':
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        return f'\\hat{{{e_str}}}'
 
     else:
         return ''.join(omml_to_latex(child) for child in elem)
 
 
 def _render_equation_asset(latex_str, file_id, eq_filename, eq_dir):
+    """Render LaTeX string to a crisp, high-resolution PNG asset with pure white background."""
     os.makedirs(eq_dir, exist_ok=True)
     out_path = os.path.join(eq_dir, eq_filename)
     if os.path.exists(out_path):
         try:
             with PILImage.open(out_path) as img:
-                w, h = img.size
-            return out_path, w, h
+                return out_path, img.width, img.height
         except Exception:
             pass
 
     try:
-        fig = plt.figure(figsize=(0.1, 0.1))
+        fig = plt.figure(figsize=(0.1, 0.1), facecolor='white')
         formatted_latex = f"${latex_str}$" if not latex_str.startswith('$') else latex_str
-        text = fig.text(0, 0, formatted_latex, fontsize=11)
+        text = fig.text(0, 0, formatted_latex, fontsize=11, color='black')
         fig.canvas.draw()
         bbox = text.get_window_extent(fig.canvas.get_renderer())
         w_in, h_in = bbox.width / fig.dpi, bbox.height / fig.dpi
         fig.set_size_inches(w_in + 0.04, h_in + 0.04)
-        plt.savefig(out_path, dpi=300, bbox_inches='tight', transparent=True, pad_inches=0.01)
+        plt.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white', pad_inches=0.01)
         plt.close(fig)
 
         with PILImage.open(out_path) as img:
-            return out_path, img.width, img.height
+            trimmed = _trim_white_borders(img)
+            trimmed.save(out_path, format='PNG')
+            return out_path, trimmed.width, trimmed.height
     except Exception as e:
         print(f"Warning: Failed to render equation latex '{latex_str}': {e}")
         return None, 0, 0
 
 
-def _parse_cell_content(cell, file_id, eq_dir, row_idx):
+def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
     """
-    Parse a cell's paragraphs to extract structured content segments (text runs and OMML equations).
+    Parse a cell's paragraphs to extract structured content segments (text runs, OMML equations, and legacy OLE equations).
+    Maintains exact inline position and document order.
     Returns tuple: (full_text_string, content_list)
     """
     content = []
@@ -467,19 +716,14 @@ def _parse_cell_content(cell, file_id, eq_dir, row_idx):
     for p in cell.paragraphs:
         for child in p._element:
             tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-            if tag == 'r':
-                t_elems = child.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
-                t_text = ''.join([t.text or '' for t in t_elems])
-                if t_text:
-                    current_text += t_text
-            elif tag in ('oMath', 'oMathPara'):
+
+            if tag in ('oMath', 'oMathPara'):
                 if current_text:
                     content.append({'type': 'text', 'value': current_text})
                     current_text = ""
-                
+
                 try:
                     omml_raw = ET.tostring(child, encoding='utf-8').decode('utf-8')
-                    # Standardize namespace prefix to m:
                     omml_xml_clean = re.sub(r'xmlns:ns\d+="[^"]*"', '', omml_raw)
                     omml_xml_clean = re.sub(r'ns\d+:', 'm:', omml_xml_clean)
                     if 'xmlns:m=' not in omml_xml_clean:
@@ -492,7 +736,13 @@ def _parse_cell_content(cell, file_id, eq_dir, row_idx):
                         out_path, w, h = _render_equation_asset(latex, file_id, eq_filename, eq_dir)
                         url = f"/api/equations/{file_id}/{eq_filename}"
                         aspect_ratio = (w / float(h)) if h > 0 else 1.0
-                        
+
+                        # Matplotlib renders at 300 DPI: 1 inch = 72 pt = 300 px
+                        w_pt = float(w) * (72.0 / 300.0) if w > 0 else 20.0
+                        h_pt = float(h) * (72.0 / 300.0) if h > 0 else 14.0
+                        aspect_ratio = (w_pt / h_pt) if h_pt > 0 else 1.0
+                        is_block = (tag == 'oMathPara') or (h_pt >= 24.0 and not current_text)
+
                         content.append({
                             'type': 'equation',
                             'latex': latex,
@@ -501,10 +751,70 @@ def _parse_cell_content(cell, file_id, eq_dir, row_idx):
                             'url': url,
                             'width': w,
                             'height': h,
-                            'aspect_ratio': aspect_ratio
+                            'width_pt': w_pt,
+                            'height_pt': h_pt,
+                            'aspect_ratio': aspect_ratio,
+                            'is_legacy_ole': False,
+                            'is_block': is_block
                         })
                 except Exception as e:
-                    print(f"Warning: Exception parsing equation in row {row_idx}: {e}")
+                    print(f"Warning: Exception parsing OMML equation in row {row_idx}: {e}")
+
+            elif tag == 'object':
+                # Direct OLE Object
+                if current_text:
+                    content.append({'type': 'text', 'value': current_text})
+                    current_text = ""
+
+                eq_obj = _extract_ole_equation_item(child, doc, file_id, eq_dir, row_idx, eq_counter + 1)
+                if eq_obj:
+                    eq_counter += 1
+                    content.append(eq_obj)
+
+            elif tag == 'r':
+                # Walk run child elements
+                for r_child in child:
+                    r_tag = r_child.tag.split('}')[-1] if '}' in r_child.tag else r_child.tag
+                    if r_tag == 't':
+                        current_text += (r_child.text or '')
+                    elif r_tag == 'object':
+                        if current_text:
+                            content.append({'type': 'text', 'value': current_text})
+                            current_text = ""
+                        eq_obj = _extract_ole_equation_item(r_child, doc, file_id, eq_dir, row_idx, eq_counter + 1)
+                        if eq_obj:
+                            eq_counter += 1
+                            content.append(eq_obj)
+                    elif r_tag in ('oMath', 'oMathPara'):
+                        if current_text:
+                            content.append({'type': 'text', 'value': current_text})
+                            current_text = ""
+                        try:
+                            latex = omml_to_latex(r_child)
+                            if latex.strip():
+                                eq_counter += 1
+                                eq_filename = f"eq_{row_idx}_{eq_counter}.png"
+                                out_path, w, h = _render_equation_asset(latex, file_id, eq_filename, eq_dir)
+                                url = f"/api/equations/{file_id}/{eq_filename}"
+                                w_pt = float(w) * (72.0 / 300.0) if w > 0 else 20.0
+                                h_pt = float(h) * (72.0 / 300.0) if h > 0 else 14.0
+                                aspect_ratio = (w_pt / h_pt) if h_pt > 0 else 1.0
+                                is_block = (h_pt >= 24.0 and not current_text)
+                                content.append({
+                                    'type': 'equation',
+                                    'latex': latex,
+                                    'local_path': out_path,
+                                    'url': url,
+                                    'width': w,
+                                    'height': h,
+                                    'width_pt': w_pt,
+                                    'height_pt': h_pt,
+                                    'aspect_ratio': aspect_ratio,
+                                    'is_legacy_ole': False,
+                                    'is_block': is_block
+                                })
+                        except Exception as e:
+                            print(f"Warning: Exception parsing run OMML equation in row {row_idx}: {e}")
 
         if current_text and not current_text.endswith(' '):
             current_text += ' '
@@ -520,9 +830,60 @@ def _parse_cell_content(cell, file_id, eq_dir, row_idx):
         else:
             consolidated.append(item)
 
-    full_text = "".join([item['value'] if item['type'] == 'text' else f" ${item.get('latex', '')}$ " for item in consolidated]).strip()
+    full_text = "".join([
+        item['value'] if item['type'] == 'text' else (
+            f" ${item.get('latex', '')}$ " if item.get('latex') else " [Equation] "
+        ) for item in consolidated
+    ]).strip()
+
+    if not full_text:
+        full_text = cell.text.strip()
+        if not full_text and any(c['type'] == 'equation' for c in consolidated):
+            full_text = "[Equation]"
 
     return full_text, consolidated
+
+
+def _extract_ole_equation_item(obj_elem, doc, file_id, eq_dir, row_idx, eq_number):
+    """Extract legacy Equation Editor 3.0 / MathType object as an equation content item."""
+    imgd = obj_elem.find('.//{urn:schemas-microsoft-com:vml}imagedata')
+    shape = obj_elem.find('.//{urn:schemas-microsoft-com:vml}shape')
+    if imgd is None:
+        return None
+
+    rid = imgd.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+    if not rid or rid not in doc.part.rels:
+        return None
+
+    part = doc.part.rels[rid].target_part
+    style = shape.attrib.get('style', '') if shape is not None else ''
+    w_pt, h_pt = _parse_shape_style_dimensions(style)
+
+    eq_filename = f"eq_ole_{row_idx}_{eq_number}.png"
+    out_path, img_w, img_h = _process_equation_ole_image(part.blob, file_id, eq_filename, eq_dir, target_width_pt=w_pt, target_height_pt=h_pt)
+
+    if not out_path:
+        return None
+
+    w_pt = w_pt or (float(img_w) * 0.75 if img_w > 0 else 40.0)
+    h_pt = h_pt or (float(img_h) * 0.75 if img_h > 0 else 18.0)
+    aspect_ratio = (w_pt / h_pt) if (h_pt > 0) else ((img_w / float(img_h)) if img_h > 0 else 1.0)
+    url = f"/api/equations/{file_id}/{eq_filename}"
+    is_block = (h_pt >= 24.0)
+
+    return {
+        'type': 'equation',
+        'is_legacy_ole': True,
+        'url': url,
+        'local_path': out_path,
+        'width': img_w,
+        'height': img_h,
+        'width_pt': w_pt,
+        'height_pt': h_pt,
+        'aspect_ratio': aspect_ratio,
+        'is_block': is_block,
+        'latex': ''
+    }
 
 
 def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir, eq_dir=None):
@@ -539,13 +900,14 @@ def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir, eq_dir=None)
         if len(cells_text) < 3:
             continue
 
-        row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir)
+        eq_rids = _extract_row_equation_rids(row)
+        row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir, eq_rids)
 
         q_no_raw = cells_text[0].strip()
         alt_raw = cells_text[1].strip() if len(cells_text) > 1 else '1'
         
         # Extract rich text and equations from cell 2
-        text, content = _parse_cell_content(row.cells[2], file_id, eq_dir, r_idx) if eq_dir else (cells_text[2].strip(), [{'type': 'text', 'value': cells_text[2].strip()}])
+        text, content = _parse_cell_content(row.cells[2], doc, file_id, eq_dir, r_idx) if eq_dir else (cells_text[2].strip(), [{'type': 'text', 'value': cells_text[2].strip()}])
         if not text and len(cells_text) > 2:
             text = cells_text[2].strip()
 
@@ -560,7 +922,8 @@ def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir, eq_dir=None)
                         last_q['images'].append(img_url)
             continue
 
-        if not text and not row_imgs:
+        has_equations = any(c.get('type') == 'equation' for c in content)
+        if not text and not row_imgs and not has_equations:
             continue
 
         q_no = int(q_match.group(1))
@@ -598,13 +961,14 @@ def _parse_part_bc(table, start_idx, end_idx, doc, file_id, img_dir, eq_dir=None
         if len(cells_text) < 3:
             continue
 
-        row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir)
+        eq_rids = _extract_row_equation_rids(row)
+        row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir, eq_rids)
 
         q_no_raw = cells_text[0].strip()
         alt_raw = cells_text[1].strip() if len(cells_text) > 1 else '1'
         
         # Extract rich text and equations from cell 2
-        text, content = _parse_cell_content(row.cells[2], file_id, eq_dir, r_idx) if eq_dir else (cells_text[2].strip(), [{'type': 'text', 'value': cells_text[2].strip()}])
+        text, content = _parse_cell_content(row.cells[2], doc, file_id, eq_dir, r_idx) if eq_dir else (cells_text[2].strip(), [{'type': 'text', 'value': cells_text[2].strip()}])
         if not text and len(cells_text) > 2:
             text = cells_text[2].strip()
 
@@ -623,7 +987,8 @@ def _parse_part_bc(table, start_idx, end_idx, doc, file_id, img_dir, eq_dir=None
                         last_q_sub['images'].append(img_url)
             continue
 
-        if not text and not row_imgs:
+        has_equations = any(c.get('type') == 'equation' for c in content)
+        if not text and not row_imgs and not has_equations:
             continue
 
         sub_match = re.search(r'([abAB])', q_no_raw + ' ' + sub_part_raw)
