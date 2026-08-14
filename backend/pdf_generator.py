@@ -22,6 +22,8 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.pdfgen import canvas
 from PIL import Image as PILImage
 
+from html import escape as html_escape
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -33,6 +35,41 @@ def _resolve_local_path(img_url, base_dir=BASE_DIR):
         rel_path = img_url.replace('/api/images/', '').lstrip('/')
         return os.path.join(base_dir, 'uploads', 'images', rel_path)
     return img_url
+
+
+def _resolve_equation_path(eq_url, base_dir=BASE_DIR):
+    """Convert relative URL /api/equations/<file_id>/<filename> to local disk path."""
+    if not eq_url:
+        return None
+    if eq_url.startswith('/api/equations/'):
+        rel_path = eq_url.replace('/api/equations/', '').lstrip('/')
+        return os.path.join(base_dir, 'uploads', 'equations', rel_path)
+    return eq_url
+
+
+def _build_pdf_markup(q_or_text, prefix=""):
+    """Build ReportLab paragraph markup with inline equation images."""
+    if isinstance(q_or_text, dict):
+        content = q_or_text.get('content')
+        if content:
+            parts = [prefix]
+            for item in content:
+                if item['type'] == 'text':
+                    parts.append(html_escape(item['value']))
+                elif item['type'] == 'equation':
+                    local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
+                    if local_path and os.path.exists(local_path):
+                        ar = item.get('aspect_ratio', 1.0)
+                        h_pt = 12.0
+                        w_pt = h_pt * ar
+                        parts.append(f" <img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='middle'/> ")
+                    else:
+                        parts.append(f" ${html_escape(item.get('latex', ''))}$ ")
+            return "".join(parts)
+        else:
+            return prefix + html_escape(q_or_text.get('text', ''))
+    else:
+        return prefix + str(q_or_text)
 
 
 def _make_question_cell(text_markup, images, styles, base_dir=BASE_DIR, max_w=310, max_h=220):
@@ -219,7 +256,7 @@ def generate_pdf(paper_data, output_path=None):
         for q in part_a['questions']:
             a_data.append([
                 Paragraph(str(q['q_no']), styles['CellCenter']),
-                Paragraph(q['text'], styles['CellText']),
+                _make_question_cell(_build_pdf_markup(q), q.get('images', []), styles),
                 Paragraph(str(q['co']), styles['CellCenter']),
                 Paragraph(str(q['marks']), styles['CellCenter']),
                 Paragraph(str(q['k_level']), styles['CellCenter']),
@@ -251,7 +288,7 @@ def generate_pdf(paper_data, output_path=None):
 
             b_data.append([
                 Paragraph(f"{q_no}.", styles['CellCenter']),
-                Paragraph(f"<b>a)</b> {a_q['text']}", styles['CellText']),
+                _make_question_cell(_build_pdf_markup(a_q, prefix="<b>a)</b> "), a_q.get('images', []), styles),
                 Paragraph(str(a_q['co']), styles['CellCenter']),
                 Paragraph(str(a_q['marks']), styles['CellCenter']),
                 Paragraph(str(a_q['k_level']), styles['CellCenter']),
@@ -263,7 +300,7 @@ def generate_pdf(paper_data, output_path=None):
             ])
             b_data.append([
                 '',
-                Paragraph(f"<b>b)</b> {b_q['text']}", styles['CellText']),
+                _make_question_cell(_build_pdf_markup(b_q, prefix="<b>b)</b> "), b_q.get('images', []), styles),
                 Paragraph(str(b_q['co']), styles['CellCenter']),
                 Paragraph(str(b_q['marks']), styles['CellCenter']),
                 Paragraph(str(b_q['k_level']), styles['CellCenter']),
@@ -295,7 +332,7 @@ def generate_pdf(paper_data, output_path=None):
 
             c_data.append([
                 Paragraph(f"{q_no}.", styles['CellCenter']),
-                Paragraph(f"<b>a)</b> {a_q['text']}", styles['CellText']),
+                _make_question_cell(_build_pdf_markup(a_q, prefix="<b>a)</b> "), a_q.get('images', []), styles),
                 Paragraph(str(a_q['co']), styles['CellCenter']),
                 Paragraph(str(a_q['marks']), styles['CellCenter']),
                 Paragraph(str(a_q['k_level']), styles['CellCenter']),
@@ -307,7 +344,7 @@ def generate_pdf(paper_data, output_path=None):
             ])
             c_data.append([
                 '',
-                Paragraph(f"<b>b)</b> {b_q['text']}", styles['CellText']),
+                _make_question_cell(_build_pdf_markup(b_q, prefix="<b>b)</b> "), b_q.get('images', []), styles),
                 Paragraph(str(b_q['co']), styles['CellCenter']),
                 Paragraph(str(b_q['marks']), styles['CellCenter']),
                 Paragraph(str(b_q['k_level']), styles['CellCenter']),

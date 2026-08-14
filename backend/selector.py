@@ -64,6 +64,7 @@ def _select_cie_i(parsed_data):
         part_a_selected.append({
             'q_no': new_q_no,
             'text': chosen['text'],
+            'content': chosen.get('content', []),
             'k_level': chosen['k_level'],
             'co': chosen['co'],
             'marks': part_a_marks,
@@ -94,6 +95,7 @@ def _select_cie_i(parsed_data):
             'q_no': new_q_no,
             'a': {
                 'text': chosen_a['text'],
+                'content': chosen_a.get('content', []),
                 'k_level': chosen_a['k_level'],
                 'co': chosen_a['co'],
                 'marks': part_b_marks,
@@ -102,6 +104,7 @@ def _select_cie_i(parsed_data):
             },
             'b': {
                 'text': chosen_b['text'],
+                'content': chosen_b.get('content', []),
                 'k_level': chosen_b['k_level'],
                 'co': chosen_b['co'],
                 'marks': part_b_marks,
@@ -133,6 +136,7 @@ def _select_cie_i(parsed_data):
                 'q_no': new_q_no,
                 'a': {
                     'text': chosen_a['text'],
+                    'content': chosen_a.get('content', []),
                     'k_level': chosen_a['k_level'],
                     'co': chosen_a['co'],
                     'marks': part_c_marks,
@@ -141,6 +145,7 @@ def _select_cie_i(parsed_data):
                 },
                 'b': {
                     'text': chosen_b['text'],
+                    'content': chosen_b.get('content', []),
                     'k_level': chosen_b['k_level'],
                     'co': chosen_b['co'],
                     'marks': part_c_marks,
@@ -192,6 +197,7 @@ def _select_model(parsed_data):
         part_a_selected.append({
             'q_no': q_no,
             'text': chosen['text'],
+            'content': chosen.get('content', []),
             'k_level': chosen['k_level'],
             'co': chosen['co'],
             'marks': part_a_marks,
@@ -218,6 +224,7 @@ def _select_model(parsed_data):
             'q_no': q_no,
             'a': {
                 'text': chosen_a['text'],
+                'content': chosen_a.get('content', []),
                 'k_level': chosen_a['k_level'],
                 'co': chosen_a['co'],
                 'marks': part_b_marks,
@@ -226,6 +233,7 @@ def _select_model(parsed_data):
             },
             'b': {
                 'text': chosen_b['text'],
+                'content': chosen_b.get('content', []),
                 'k_level': chosen_b['k_level'],
                 'co': chosen_b['co'],
                 'marks': part_b_marks,
@@ -255,6 +263,7 @@ def _select_model(parsed_data):
                 'q_no': 16,
                 'a': {
                     'text': chosen_a['text'],
+                    'content': chosen_a.get('content', []),
                     'k_level': chosen_a['k_level'],
                     'co': chosen_a['co'],
                     'marks': part_c_marks,
@@ -263,6 +272,7 @@ def _select_model(parsed_data):
                 },
                 'b': {
                     'text': chosen_b['text'],
+                    'content': chosen_b.get('content', []),
                     'k_level': chosen_b['k_level'],
                     'co': chosen_b['co'],
                     'marks': part_c_marks,

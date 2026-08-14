@@ -1,9 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 
-// Configure API Base URL
-axios.defaults.baseURL =
-  'https://question-paper-generator-6j5l.onrender.com';
+// Configure API Base URL (uses relative /api in dev via Vite proxy, or env var / vercel rewrite)
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || '';
 
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
@@ -220,6 +219,14 @@ export default function App() {
             )}
           </div>
 
+          {/* Download Buttons */}
+          <DownloadButtons
+            paperId={paperId}
+            onDownloadPdf={() => handleDownload('pdf')}
+            onDownloadDocx={() => handleDownload('docx')}
+            downloading={downloading}
+          />
+
           {/* Software Info Box */}
           <div className="bg-white rounded-xl shadow-xs border border-gray-200 p-4 text-center">
             <p className="text-xs font-semibold text-gray-700">Jeppiaar Institute of Technology</p>
@@ -265,14 +272,6 @@ export default function App() {
               </div>
             )}
           </div>
-
-          {/* Download Buttons Footer */}
-          <DownloadButtons
-            paperId={paperId}
-            onDownloadPdf={() => handleDownload('pdf')}
-            onDownloadDocx={() => handleDownload('docx')}
-            downloading={downloading}
-          />
         </main>
 
       </div>

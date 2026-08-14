@@ -12,6 +12,11 @@ Reads a .docx file containing a single-table Question Bank and extracts:
 
 import os
 import re
+import xml.etree.ElementTree as ET
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from PIL import Image as PILImage
 from docx import Document
 
 
@@ -93,10 +98,12 @@ def parse_question_bank(filepath, file_id=None):
     if not doc.tables:
         raise ValueError("No tables found in the document. Expected a table-based Question Bank.")
 
-    # Image storage directory for this file
+    # Image and equation storage directories for this file
     base_dir = os.path.dirname(os.path.abspath(__file__))
     img_dir = os.path.join(base_dir, 'uploads', 'images', file_id)
+    eq_dir = os.path.join(base_dir, 'uploads', 'equations', file_id)
     os.makedirs(img_dir, exist_ok=True)
+    os.makedirs(eq_dir, exist_ok=True)
 
     table = doc.tables[0]
     rows = []
@@ -132,14 +139,14 @@ def parse_question_bank(filepath, file_id=None):
 
     # ── Parse Part A ──────────────────────────────────────
     part_a_end = part_b_start if part_b_start else len(rows)
-    part_a_questions = _parse_part_a(table, part_a_start, part_a_end, doc, file_id, img_dir)
+    part_a_questions = _parse_part_a(table, part_a_start, part_a_end, doc, file_id, img_dir, eq_dir)
 
     # ── Parse Part B ──────────────────────────────────────
     part_b_end = part_c_start if part_c_start else len(rows)
-    part_b_questions = _parse_part_bc(table, part_b_start, part_b_end, doc, file_id, img_dir)
+    part_b_questions = _parse_part_bc(table, part_b_start, part_b_end, doc, file_id, img_dir, eq_dir)
 
     # ── Parse Part C ──────────────────────────────────────
-    part_c_questions = _parse_part_bc(table, part_c_start, len(rows), doc, file_id, img_dir)
+    part_c_questions = _parse_part_bc(table, part_c_start, len(rows), doc, file_id, img_dir, eq_dir)
 
     # ── Determine marks per question ──────────────────────
     part_a_marks = _extract_marks_per_question(part_a_config)
@@ -315,7 +322,210 @@ def _extract_marks_per_question(config):
     return 0
 
 
-def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir):
+def omml_to_latex(elem):
+    tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+    
+    if tag in ('oMath', 'oMathPara', 'e', 'num', 'den', 'sub', 'sup', 'fName', 'lim'):
+        return ''.join(omml_to_latex(child) for child in elem)
+    
+    elif tag == 'r':
+        text = ''
+        for child in elem:
+            ctag = child.tag.split('}')[-1]
+            if ctag == 't':
+                text += child.text or ''
+        replacements = {
+            '…': r'\dots',
+            '∞': r'\infty',
+            '∑': r'\sum ',
+            'π': r'\pi ',
+            'α': r'\alpha ', 'β': r'\beta ', 'θ': r'\theta ', 'λ': r'\lambda ',
+            '≤': r'\le ', '≥': r'\ge ', '≠': r'\ne ', '×': r'\times ', '÷': r'\div ', '±': r'\pm '
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+        return text
+
+    elif tag == 'f':
+        num_elem = elem.find('.//{*}num')
+        den_elem = elem.find('.//{*}den')
+        num = omml_to_latex(num_elem) if num_elem is not None else ''
+        den = omml_to_latex(den_elem) if den_elem is not None else ''
+        return f'\\frac{{{num}}}{{{den}}}'
+
+    elif tag == 'sSup':
+        e_elem = elem.find('.//{*}e')
+        sup_elem = elem.find('.//{*}sup')
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        sup_str = omml_to_latex(sup_elem) if sup_elem is not None else ''
+        return f'{{{e_str}}}^{{{sup_str}}}'
+
+    elif tag == 'sSub':
+        e_elem = elem.find('.//{*}e')
+        sub_elem = elem.find('.//{*}sub')
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        sub_str = omml_to_latex(sub_elem) if sub_elem is not None else ''
+        return f'{{{e_str}}}_{{{sub_str}}}'
+
+    elif tag == 'sSubSup':
+        e_elem = elem.find('.//{*}e')
+        sub_elem = elem.find('.//{*}sub')
+        sup_elem = elem.find('.//{*}sup')
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        sub_str = omml_to_latex(sub_elem) if sub_elem is not None else ''
+        sup_str = omml_to_latex(sup_elem) if sup_elem is not None else ''
+        return f'{{{e_str}}}_{{{sub_str}}}^{{{sup_str}}}'
+
+    elif tag == 'd':
+        dPr = elem.find('.//{*}dPr')
+        beg_chr = '('
+        end_chr = ')'
+        if dPr is not None:
+            beg = dPr.find('.//{*}begChr')
+            end = dPr.find('.//{*}endChr')
+            if beg is not None: beg_chr = beg.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', beg_chr)
+            if end is not None: end_chr = end.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', end_chr)
+        e_elems = elem.findall('.//{*}e')
+        inner = ''.join(omml_to_latex(e) for e in e_elems)
+        beg_map = {'(': r'\left(', '[': r'\left[', '{': r'\left\{'}
+        end_map = {')': r'\right)', ']': r'\right]', '}': r'\right\}'}
+        b_str = beg_map.get(beg_chr, beg_chr)
+        e_str = end_map.get(end_chr, end_chr)
+        return f'{b_str}{inner}{e_str}'
+
+    elif tag == 'nary':
+        naryPr = elem.find('.//{*}naryPr')
+        chr_val = '∑'
+        if naryPr is not None:
+            c = naryPr.find('.//{*}chr')
+            if c is not None: chr_val = c.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', chr_val)
+        sub_elem = elem.find('.//{*}sub')
+        sup_elem = elem.find('.//{*}sup')
+        e_elem = elem.find('.//{*}e')
+        sub_str = f'_{{{omml_to_latex(sub_elem)}}}' if sub_elem is not None else ''
+        sup_str = f'^{{{omml_to_latex(sup_elem)}}}' if sup_elem is not None else ''
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        op_symbol = r'\sum' if chr_val == '∑' else (r'\int' if chr_val == '∫' else chr_val)
+        return f'{op_symbol}{sub_str}{sup_str}{{{e_str}}}'
+
+    elif tag == 'func':
+        fname_elem = elem.find('.//{*}fName')
+        e_elem = elem.find('.//{*}e')
+        fname_str = omml_to_latex(fname_elem) if fname_elem is not None else ''
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        return f'\\{fname_str}{{{e_str}}}'
+
+    elif tag == 'rad':
+        deg_elem = elem.find('.//{*}deg')
+        e_elem = elem.find('.//{*}e')
+        deg_str = f'[{omml_to_latex(deg_elem)}]' if deg_elem is not None and len(deg_elem) > 0 else ''
+        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        return f'\\sqrt{deg_str}{{{e_str}}}'
+
+    else:
+        return ''.join(omml_to_latex(child) for child in elem)
+
+
+def _render_equation_asset(latex_str, file_id, eq_filename, eq_dir):
+    os.makedirs(eq_dir, exist_ok=True)
+    out_path = os.path.join(eq_dir, eq_filename)
+    if os.path.exists(out_path):
+        try:
+            with PILImage.open(out_path) as img:
+                w, h = img.size
+            return out_path, w, h
+        except Exception:
+            pass
+
+    try:
+        fig = plt.figure(figsize=(0.1, 0.1))
+        formatted_latex = f"${latex_str}$" if not latex_str.startswith('$') else latex_str
+        text = fig.text(0, 0, formatted_latex, fontsize=11)
+        fig.canvas.draw()
+        bbox = text.get_window_extent(fig.canvas.get_renderer())
+        w_in, h_in = bbox.width / fig.dpi, bbox.height / fig.dpi
+        fig.set_size_inches(w_in + 0.04, h_in + 0.04)
+        plt.savefig(out_path, dpi=300, bbox_inches='tight', transparent=True, pad_inches=0.01)
+        plt.close(fig)
+
+        with PILImage.open(out_path) as img:
+            return out_path, img.width, img.height
+    except Exception as e:
+        print(f"Warning: Failed to render equation latex '{latex_str}': {e}")
+        return None, 0, 0
+
+
+def _parse_cell_content(cell, file_id, eq_dir, row_idx):
+    """
+    Parse a cell's paragraphs to extract structured content segments (text runs and OMML equations).
+    Returns tuple: (full_text_string, content_list)
+    """
+    content = []
+    current_text = ""
+    eq_counter = 0
+
+    for p in cell.paragraphs:
+        for child in p._element:
+            tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+            if tag == 'r':
+                t_elems = child.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                t_text = ''.join([t.text or '' for t in t_elems])
+                if t_text:
+                    current_text += t_text
+            elif tag in ('oMath', 'oMathPara'):
+                if current_text:
+                    content.append({'type': 'text', 'value': current_text})
+                    current_text = ""
+                
+                try:
+                    omml_raw = ET.tostring(child, encoding='utf-8').decode('utf-8')
+                    # Standardize namespace prefix to m:
+                    omml_xml_clean = re.sub(r'xmlns:ns\d+="[^"]*"', '', omml_raw)
+                    omml_xml_clean = re.sub(r'ns\d+:', 'm:', omml_xml_clean)
+                    if 'xmlns:m=' not in omml_xml_clean:
+                        omml_xml_clean = omml_xml_clean.replace('<m:oMath', '<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"')
+
+                    latex = omml_to_latex(child)
+                    if latex.strip():
+                        eq_counter += 1
+                        eq_filename = f"eq_{row_idx}_{eq_counter}.png"
+                        out_path, w, h = _render_equation_asset(latex, file_id, eq_filename, eq_dir)
+                        url = f"/api/equations/{file_id}/{eq_filename}"
+                        aspect_ratio = (w / float(h)) if h > 0 else 1.0
+                        
+                        content.append({
+                            'type': 'equation',
+                            'latex': latex,
+                            'omml': omml_xml_clean,
+                            'local_path': out_path,
+                            'url': url,
+                            'width': w,
+                            'height': h,
+                            'aspect_ratio': aspect_ratio
+                        })
+                except Exception as e:
+                    print(f"Warning: Exception parsing equation in row {row_idx}: {e}")
+
+        if current_text and not current_text.endswith(' '):
+            current_text += ' '
+
+    if current_text:
+        content.append({'type': 'text', 'value': current_text})
+
+    # Consolidate adjacent text segments in content
+    consolidated = []
+    for item in content:
+        if consolidated and consolidated[-1]['type'] == 'text' and item['type'] == 'text':
+            consolidated[-1]['value'] += item['value']
+        else:
+            consolidated.append(item)
+
+    full_text = "".join([item['value'] if item['type'] == 'text' else f" ${item.get('latex', '')}$ " for item in consolidated]).strip()
+
+    return full_text, consolidated
+
+
+def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir, eq_dir=None):
     """Parse Part A questions into dictionary grouped by question number."""
     questions = {}
     if start_idx is None:
@@ -325,17 +535,22 @@ def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir):
 
     for r_idx in range(start_idx + 1, end_idx):
         row = table.rows[r_idx]
-        cells = [cell.text.strip() for cell in row.cells]
-        if len(cells) < 3:
+        cells_text = [cell.text.strip() for cell in row.cells]
+        if len(cells_text) < 3:
             continue
 
         row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir)
 
-        q_no_raw = cells[0].strip()
-        alt_raw = cells[1].strip() if len(cells) > 1 else '1'
-        text = cells[2].strip() if len(cells) > 2 else ''
-        k_level = cells[3].strip() if len(cells) > 3 else ''
-        co = cells[4].strip() if len(cells) > 4 else ''
+        q_no_raw = cells_text[0].strip()
+        alt_raw = cells_text[1].strip() if len(cells_text) > 1 else '1'
+        
+        # Extract rich text and equations from cell 2
+        text, content = _parse_cell_content(row.cells[2], file_id, eq_dir, r_idx) if eq_dir else (cells_text[2].strip(), [{'type': 'text', 'value': cells_text[2].strip()}])
+        if not text and len(cells_text) > 2:
+            text = cells_text[2].strip()
+
+        k_level = cells_text[3].strip() if len(cells_text) > 3 else ''
+        co = cells_text[4].strip() if len(cells_text) > 4 else ''
 
         q_match = re.search(r'(\d+)', q_no_raw)
         if not q_match:
@@ -356,6 +571,7 @@ def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir):
 
         q_obj = {
             'text': text,
+            'content': content,
             'k_level': k_level,
             'co': co,
             'alt_index': alt_idx,
@@ -367,7 +583,7 @@ def _parse_part_a(table, start_idx, end_idx, doc, file_id, img_dir):
     return questions
 
 
-def _parse_part_bc(table, start_idx, end_idx, doc, file_id, img_dir):
+def _parse_part_bc(table, start_idx, end_idx, doc, file_id, img_dir, eq_dir=None):
     """Parse Part B or Part C questions into dictionary grouped by question number and sub-part (a/b)."""
     questions = {}
     if start_idx is None:
@@ -378,18 +594,23 @@ def _parse_part_bc(table, start_idx, end_idx, doc, file_id, img_dir):
 
     for r_idx in range(start_idx + 1, end_idx):
         row = table.rows[r_idx]
-        cells = [cell.text.strip() for cell in row.cells]
-        if len(cells) < 3:
+        cells_text = [cell.text.strip() for cell in row.cells]
+        if len(cells_text) < 3:
             continue
 
         row_imgs = _extract_row_images(row, r_idx, doc, file_id, img_dir)
 
-        q_no_raw = cells[0].strip()
-        alt_raw = cells[1].strip() if len(cells) > 1 else '1'
-        text = cells[2].strip() if len(cells) > 2 else ''
-        k_level = cells[3].strip() if len(cells) > 3 else ''
-        co = cells[4].strip() if len(cells) > 4 else ''
-        sub_part_raw = cells[5].strip() if len(cells) > 5 else ''
+        q_no_raw = cells_text[0].strip()
+        alt_raw = cells_text[1].strip() if len(cells_text) > 1 else '1'
+        
+        # Extract rich text and equations from cell 2
+        text, content = _parse_cell_content(row.cells[2], file_id, eq_dir, r_idx) if eq_dir else (cells_text[2].strip(), [{'type': 'text', 'value': cells_text[2].strip()}])
+        if not text and len(cells_text) > 2:
+            text = cells_text[2].strip()
+
+        k_level = cells_text[3].strip() if len(cells_text) > 3 else ''
+        co = cells_text[4].strip() if len(cells_text) > 4 else ''
+        sub_part_raw = cells_text[5].strip() if len(cells_text) > 5 else ''
 
         q_match = re.search(r'(\d+)', q_no_raw)
         if q_match:
@@ -414,6 +635,7 @@ def _parse_part_bc(table, start_idx, end_idx, doc, file_id, img_dir):
 
         q_obj = {
             'text': text,
+            'content': content,
             'k_level': k_level,
             'co': co,
             'alt_index': alt_idx,

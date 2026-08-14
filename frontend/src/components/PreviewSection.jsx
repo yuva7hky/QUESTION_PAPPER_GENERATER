@@ -1,12 +1,121 @@
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
+
 /**
- * PreviewSection Component
- * 
- * Renders the generated question paper matching the official printed JIT examination paper.
- * Avoids web-style HTML table grid borders, using clean document formatting matching qp.jpeg.
- * 
- * Props:
- *   paper — generated paper object from the backend (or null)
+ * Strip $ delimiters from LaTeX strings.
+ * Handles: $...$, ${...}$, $$...$$
  */
+function stripLatexDelimiters(latex) {
+  if (!latex) return '';
+  let s = latex.trim();
+  // Strip $$...$$ first
+  if (s.startsWith('$$') && s.endsWith('$$')) {
+    s = s.slice(2, -2).trim();
+  }
+  // Strip $...$
+  else if (s.startsWith('$') && s.endsWith('$')) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+/**
+ * Render a LaTeX string to HTML using KaTeX.
+ * Returns the HTML string, or the original text on failure.
+ */
+function renderLatexToHtml(latex) {
+  const cleaned = stripLatexDelimiters(latex);
+  if (!cleaned) return '';
+  try {
+    return katex.renderToString(cleaned, {
+      throwOnError: false,
+      displayMode: false,
+      output: 'html',
+    });
+  } catch {
+    return `<span>${latex}</span>`;
+  }
+}
+
+/**
+ * Render a text string that may contain inline $...$ LaTeX fragments.
+ * Splits on $ delimiters and renders math segments with KaTeX.
+ */
+function renderTextWithLatex(text) {
+  if (!text) return null;
+  // Match $...$ (non-greedy, no nested $)
+  const parts = text.split(/(\$[^$]+\$)/g);
+  if (parts.length === 1) {
+    // No LaTeX found
+    return <span>{text}</span>;
+  }
+  return (
+    <>
+      {parts.map((part, idx) => {
+        if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
+          const html = renderLatexToHtml(part);
+          return (
+            <span
+              key={idx}
+              className="katex-inline"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          );
+        }
+        return <span key={idx}>{part}</span>;
+      })}
+    </>
+  );
+}
+
+
+function renderQuestionContent(q, prefix = '') {
+  if (!q) return null;
+  const content = q.content;
+  if (content && content.length > 0) {
+    return (
+      <div className="inline">
+        {prefix && <span className="font-bold mr-1">{prefix}</span>}
+        {content.map((item, idx) => {
+          if (item.type === 'text') {
+            return <span key={idx}>{renderTextWithLatex(item.value)}</span>;
+          } else if (item.type === 'equation') {
+            const latex = item.latex;
+            if (latex) {
+              const html = renderLatexToHtml(latex);
+              return (
+                <span
+                  key={idx}
+                  className="katex-inline"
+                  dangerouslySetInnerHTML={{ __html: html }}
+                />
+              );
+            }
+            // Fallback to equation image if no latex
+            return (
+              <img
+                key={idx}
+                src={item.url}
+                alt={item.latex || 'Math Equation'}
+                className="inline-block align-middle mx-1 my-0"
+                style={{ height: '1.25em', verticalAlign: '-0.25em' }}
+              />
+            );
+          }
+          return null;
+        })}
+      </div>
+    );
+  }
+  // Fallback: render q.text, which may contain inline $...$ LaTeX
+  return (
+    <div>
+      {prefix && <span className="font-bold mr-1">{prefix}</span>}
+      {renderTextWithLatex(q.text)}
+    </div>
+  );
+}
+
 export default function PreviewSection({ paper }) {
   if (!paper) return null;
 
@@ -94,7 +203,7 @@ export default function PreviewSection({ paper }) {
               <div key={i} className="flex items-start">
                 <div className="w-10 text-center font-medium pt-0.5">{q.q_no}</div>
                 <div className="flex-1 pr-3">
-                  <div>{q.text}</div>
+                  <div>{renderQuestionContent(q)}</div>
                   {q.images && q.images.length > 0 && (
                     <div className="mt-2 mb-1 flex flex-col items-center gap-2">
                       {q.images.map((imgSrc, imgIdx) => (
@@ -140,9 +249,7 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10 text-center font-bold">{group.q_no}.</div>
                   <div className="flex-1 pr-3">
-                    <div>
-                      <span className="font-bold mr-1">a)</span> {group.a.text}
-                    </div>
+                    {renderQuestionContent(group.a, 'a)')}
                     {group.a.images && group.a.images.length > 0 && (
                       <div className="mt-2 mb-1 flex flex-col items-center gap-2">
                         {group.a.images.map((imgSrc, imgIdx) => (
@@ -170,9 +277,7 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10"></div>
                   <div className="flex-1 pr-3">
-                    <div>
-                      <span className="font-bold mr-1">b)</span> {group.b.text}
-                    </div>
+                    {renderQuestionContent(group.b, 'b)')}
                     {group.b.images && group.b.images.length > 0 && (
                       <div className="mt-2 mb-1 flex flex-col items-center gap-2">
                         {group.b.images.map((imgSrc, imgIdx) => (
@@ -219,9 +324,7 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10 text-center font-bold">{group.q_no}.</div>
                   <div className="flex-1 pr-3">
-                    <div>
-                      <span className="font-bold mr-1">a)</span> {group.a.text}
-                    </div>
+                    {renderQuestionContent(group.a, 'a)')}
                     {group.a.images && group.a.images.length > 0 && (
                       <div className="mt-2 mb-1 flex flex-col items-center gap-2">
                         {group.a.images.map((imgSrc, imgIdx) => (
@@ -249,9 +352,7 @@ export default function PreviewSection({ paper }) {
                 <div className="flex items-start">
                   <div className="w-10"></div>
                   <div className="flex-1 pr-3">
-                    <div>
-                      <span className="font-bold mr-1">b)</span> {group.b.text}
-                    </div>
+                    {renderQuestionContent(group.b, 'b)')}
                     {group.b.images && group.b.images.length > 0 && (
                       <div className="mt-2 mb-1 flex flex-col items-center gap-2">
                         {group.b.images.map((imgSrc, imgIdx) => (

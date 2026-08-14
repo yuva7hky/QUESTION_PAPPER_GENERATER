@@ -61,6 +61,17 @@ def serve_question_image(file_id, filename):
     return send_from_directory(img_dir, filename)
 
 
+# ── API: Serve Extracted Question Equations ───────────────────
+@app.route('/api/equations/<file_id>/<filename>', methods=['GET'])
+def serve_question_equation(file_id, filename):
+    """Serve equation image assets rendered from uploaded Question Banks."""
+    eq_dir = os.path.join(UPLOAD_DIR, 'equations', file_id)
+    if not os.path.exists(os.path.join(eq_dir, filename)):
+        return jsonify({'error': 'Equation image not found'}), 404
+    return send_from_directory(eq_dir, filename)
+
+
+
 # ── API: Upload ───────────────────────────────────────────────
 @app.route('/api/upload', methods=['POST'])
 def upload_file():

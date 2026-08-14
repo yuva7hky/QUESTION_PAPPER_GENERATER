@@ -18,7 +18,7 @@ from PIL import Image as PILImage
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Column widths matching PDF A4 layout (Total = 18.0 cm)
-QUESTION_COL_WIDTHS = [Cm(1.2), Cm(12.5), Cm(1.4), Cm(1.4), Cm(1.5)]
+QUESTION_COL_WIDTHS = [Cm(1.5), Cm(12.2), Cm(1.4), Cm(1.4), Cm(1.5)]
 
 
 def _resolve_local_path(img_url, base_dir=BASE_DIR):
@@ -91,11 +91,16 @@ def generate_docx(paper_data, output_path=None):
     # ── Register Number Box (Top Right) ───────────────────
     reg_table = doc.add_table(rows=1, cols=13)
     reg_table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    reg_table.autofit = False
     _remove_table_borders(reg_table)
     
     reg_cell_0 = reg_table.cell(0, 0)
+    reg_cell_0.width = Cm(1.8)
     reg_cell_0.paragraphs[0].text = "Reg No"
     _set_font(reg_cell_0.paragraphs[0].runs[0], bold=True, size=11)
+    # Prevent "Reg No" from wrapping to two lines
+    tcPr = reg_cell_0._tc.get_or_add_tcPr()
+    tcPr.append(parse_xml(r'<w:noWrap %s/>' % nsdecls('w')))
 
     for i in range(1, 13):
         cell = reg_table.cell(0, i)
@@ -173,7 +178,8 @@ def generate_docx(paper_data, output_path=None):
         for q in part_a['questions']:
             row_cells = table.add_row().cells
             _set_cell_text(row_cells[0], str(q['q_no']), align=WD_ALIGN_PARAGRAPH.CENTER)
-            _set_cell_text(row_cells[1], q['text'])
+            _set_cell_question_content(row_cells[1], q)
+            _insert_question_images(row_cells[1], q.get('images', []))
             _set_cell_text(row_cells[2], str(q['co']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row_cells[3], str(q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row_cells[4], str(q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -201,7 +207,8 @@ def generate_docx(paper_data, output_path=None):
             # (a)
             row1 = table.add_row().cells
             _set_cell_text(row1[0], f"{q_no}.", align=WD_ALIGN_PARAGRAPH.CENTER)
-            _set_cell_text(row1[1], f"a) {a_q['text']}")
+            _set_cell_question_content(row1[1], a_q, prefix="a) ")
+            _insert_question_images(row1[1], a_q.get('images', []))
             _set_cell_text(row1[2], str(a_q['co']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row1[3], str(a_q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row1[4], str(a_q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -212,7 +219,8 @@ def generate_docx(paper_data, output_path=None):
 
             # (b)
             row2 = table.add_row().cells
-            _set_cell_text(row2[1], f"b) {b_q['text']}")
+            _set_cell_question_content(row2[1], b_q, prefix="b) ")
+            _insert_question_images(row2[1], b_q.get('images', []))
             _set_cell_text(row2[2], str(b_q['co']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row2[3], str(b_q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row2[4], str(b_q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -239,7 +247,8 @@ def generate_docx(paper_data, output_path=None):
 
             row1 = table.add_row().cells
             _set_cell_text(row1[0], f"{q_no}.", align=WD_ALIGN_PARAGRAPH.CENTER)
-            _set_cell_text(row1[1], f"a) {a_q['text']}")
+            _set_cell_question_content(row1[1], a_q, prefix="a) ")
+            _insert_question_images(row1[1], a_q.get('images', []))
             _set_cell_text(row1[2], str(a_q['co']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row1[3], str(a_q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row1[4], str(a_q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -248,7 +257,8 @@ def generate_docx(paper_data, output_path=None):
             _set_cell_text(row_or[1], "(OR)", bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
 
             row2 = table.add_row().cells
-            _set_cell_text(row2[1], f"b) {b_q['text']}")
+            _set_cell_question_content(row2[1], b_q, prefix="b) ")
+            _insert_question_images(row2[1], b_q.get('images', []))
             _set_cell_text(row2[2], str(b_q['co']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row2[3], str(b_q['marks']), align=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row2[4], str(b_q['k_level']), align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -327,6 +337,58 @@ def _set_table_headers(table):
     headers = ['Q.NO', 'QUESTIONS', 'CO NO.', 'MARKS', 'K LEVEL']
     for i, h in enumerate(headers):
         _set_cell_text(hdr_cells[i], h, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+
+def _resolve_equation_path(eq_url, base_dir=BASE_DIR):
+    """Convert relative URL /api/equations/<file_id>/<filename> to local disk path."""
+    if not eq_url:
+        return None
+    if eq_url.startswith('/api/equations/'):
+        rel_path = eq_url.replace('/api/equations/', '').lstrip('/')
+        return os.path.join(base_dir, 'uploads', 'equations', rel_path)
+    return eq_url
+
+
+def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+    p = cell.paragraphs[0]
+    p.alignment = align
+    p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.space_before = Pt(1)
+
+    if prefix:
+        run_p = p.add_run(prefix)
+        _set_font(run_p, bold=True, size=11)
+
+    if isinstance(q_or_text, dict) and q_or_text.get('content'):
+        for item in q_or_text['content']:
+            if item['type'] == 'text':
+                run = p.add_run(item['value'])
+                _set_font(run, bold=bold, size=11)
+            elif item['type'] == 'equation':
+                omml_xml = item.get('omml')
+                inserted = False
+                if omml_xml:
+                    try:
+                        omath_elem = parse_xml(omml_xml)
+                        p._p.append(omath_elem)
+                        inserted = True
+                    except Exception as e:
+                        print(f"Warning: Could not parse OMML XML into DOCX: {e}")
+                
+                if not inserted:
+                    local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
+                    if local_path and os.path.exists(local_path):
+                        try:
+                            run = p.add_run()
+                            run.add_picture(local_path, height=Pt(11))
+                        except Exception as e:
+                            print(f"Warning: Could not insert equation image into DOCX: {e}")
+                            run = p.add_run(f" ${item.get('latex', '')}$ ")
+                            _set_font(run, bold=bold, size=11)
+    else:
+        text = q_or_text.get('text', '') if isinstance(q_or_text, dict) else str(q_or_text)
+        run = p.add_run(text)
+        _set_font(run, bold=bold, size=11)
 
 
 def _set_cell_text(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):

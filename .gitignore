@@ -12,3 +12,25 @@ backend/__pycache__/
 # Generated files
 uploads/
 generated/
+
+# Python virtual environment
+backend/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Test/scratch files
+backend/scratch_*
+backend/scratch_eqs/
+
+# Generated files
+generated/
+uploads/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Environment files
+.env
