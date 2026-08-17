@@ -22,11 +22,11 @@ QUESTION_COL_WIDTHS = [Cm(1.5), Cm(12.2), Cm(1.4), Cm(1.4), Cm(1.5)]
 
 
 def _resolve_local_path(img_url, base_dir=BASE_DIR):
-    """Convert relative URL /api/images/<file_id>/<filename> to local disk path."""
+    """Convert relative or absolute URL /api/images/<file_id>/<filename> to local disk path."""
     if not img_url:
         return None
-    if img_url.startswith('/api/images/'):
-        rel_path = img_url.replace('/api/images/', '').lstrip('/')
+    if '/api/images/' in img_url:
+        rel_path = img_url.split('/api/images/')[-1].lstrip('/')
         return os.path.join(base_dir, 'uploads', 'images', rel_path)
     return img_url
 
@@ -340,11 +340,11 @@ def _set_table_headers(table):
 
 
 def _resolve_equation_path(eq_url, base_dir=BASE_DIR):
-    """Convert relative URL /api/equations/<file_id>/<filename> to local disk path."""
+    """Convert relative or absolute URL /api/equations/<file_id>/<filename> to local disk path."""
     if not eq_url:
         return None
-    if eq_url.startswith('/api/equations/'):
-        rel_path = eq_url.replace('/api/equations/', '').lstrip('/')
+    if '/api/equations/' in eq_url:
+        rel_path = eq_url.split('/api/equations/')[-1].lstrip('/')
         return os.path.join(base_dir, 'uploads', 'equations', rel_path)
     return eq_url
 

@@ -1,6 +1,25 @@
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+/**
+ * Resolve asset URL against API_BASE_URL if configured.
+ * In local dev (or empty base URL), returns the relative path (/api/...) for Vite proxy.
+ * In production (with VITE_API_BASE_URL set), resolves to full backend URL.
+ */
+function getAssetUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:') || url.startsWith('data:')) {
+    return url;
+  }
+  if (API_BASE_URL && url.startsWith('/api/')) {
+    const base = API_BASE_URL.replace(/\/+$/, '');
+    return `${base}${url}`;
+  }
+  return url;
+}
+
 /**
  * Strip $ delimiters from LaTeX strings.
  * Handles: $...$, ${...}$, $$...$$
@@ -100,7 +119,7 @@ function renderQuestionContent(q, prefix = '') {
               return (
                 <img
                   key={idx}
-                  src={item.url}
+                  src={getAssetUrl(item.url)}
                   alt={item.latex || 'Math Equation'}
                   className="inline-block align-middle mx-1 my-0 object-contain"
                   style={
@@ -223,7 +242,7 @@ export default function PreviewSection({ paper }) {
                       {q.images.map((imgSrc, imgIdx) => (
                         <img
                           key={imgIdx}
-                          src={imgSrc}
+                          src={getAssetUrl(imgSrc)}
                           alt={`Diagram for question ${q.q_no}`}
                           className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
                         />
@@ -269,7 +288,7 @@ export default function PreviewSection({ paper }) {
                         {group.a.images.map((imgSrc, imgIdx) => (
                           <img
                             key={imgIdx}
-                            src={imgSrc}
+                            src={getAssetUrl(imgSrc)}
                             alt={`Diagram for question ${group.q_no}a`}
                             className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
                           />
@@ -297,7 +316,7 @@ export default function PreviewSection({ paper }) {
                         {group.b.images.map((imgSrc, imgIdx) => (
                           <img
                             key={imgIdx}
-                            src={imgSrc}
+                            src={getAssetUrl(imgSrc)}
                             alt={`Diagram for question ${group.q_no}b`}
                             className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
                           />
@@ -344,7 +363,7 @@ export default function PreviewSection({ paper }) {
                         {group.a.images.map((imgSrc, imgIdx) => (
                           <img
                             key={imgIdx}
-                            src={imgSrc}
+                            src={getAssetUrl(imgSrc)}
                             alt={`Diagram for question ${group.q_no}a`}
                             className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
                           />
@@ -372,7 +391,7 @@ export default function PreviewSection({ paper }) {
                         {group.b.images.map((imgSrc, imgIdx) => (
                           <img
                             key={imgIdx}
-                            src={imgSrc}
+                            src={getAssetUrl(imgSrc)}
                             alt={`Diagram for question ${group.q_no}b`}
                             className="max-h-56 max-w-full object-contain rounded border border-gray-200 shadow-2xs"
                           />
