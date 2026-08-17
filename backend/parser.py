@@ -14,12 +14,13 @@ Reads a .docx file containing a single-table Question Bank and extracts:
 
 import os
 import re
+import struct
 import xml.etree.ElementTree as ET
 from io import BytesIO
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageDraw, ImageFont, ImageChops
 from docx import Document
 
 
@@ -455,10 +456,235 @@ def _trim_white_borders(img, padding=2):
     return img
 
 
+def _render_wmf_to_pil(wmf_blob, target_width_pt=None, target_height_pt=None):
+    """
+    Robust pure-Python WMF (Windows Metafile) rasterizer using Pillow.
+    Decodes GDI objects (fonts, pens, brushes) and vector/text primitives (EXTTEXTOUT, TEXTOUT,
+    RECTANGLE, POLYGON, POLYPOLYGON, POLYLINE, MOVETO, LINETO).
+    Works 100% identically on Linux (Render) and Windows with zero external C dependencies.
+    """
+    if not wmf_blob or len(wmf_blob) < 40:
+        return None
+
+    try:
+        offset = 0
+        key = struct.unpack('<I', wmf_blob[:4])[0]
+        bbox_l, bbox_t, bbox_r, bbox_b, inch = 0, 0, 0, 0, 1440
+
+        if key == 0x9ac6cdd7:  # Placeable WMF header
+            offset = 22
+            bbox_l, bbox_t, bbox_r, bbox_b, inch = struct.unpack('<hhhhH', wmf_blob[6:16])
+
+        if offset + 18 > len(wmf_blob):
+            return None
+
+        file_type, header_size, version, file_size, num_objects, max_record, num_members = struct.unpack(
+            '<HHHIHIH', wmf_blob[offset:offset+18]
+        )
+
+        rec_offset = offset + 18
+        records = []
+        while rec_offset < len(wmf_blob):
+            if rec_offset + 6 > len(wmf_blob):
+                break
+            rec_size, rec_func = struct.unpack('<IH', wmf_blob[rec_offset:rec_offset+6])
+            if rec_size == 0:
+                break
+            rec_data = wmf_blob[rec_offset+6 : rec_offset+rec_size*2]
+            records.append((rec_func, rec_data))
+            rec_offset += rec_size * 2
+
+        # Coordinate extents
+        win_org_x, win_org_y = bbox_l, bbox_t
+        win_ext_w = (bbox_r - bbox_l) if bbox_r > bbox_l else 1000
+        win_ext_h = (bbox_b - bbox_t) if bbox_b > bbox_t else 1000
+
+        for func, data in records:
+            if func == 0x020b and len(data) >= 4:  # SETWINDOWORG
+                y, x = struct.unpack('<hh', data[:4])
+                win_org_x, win_org_y = x, y
+            elif func == 0x020c and len(data) >= 4:  # SETWINDOWEXT
+                h, w = struct.unpack('<hh', data[:4])
+                if w != 0 and h != 0:
+                    win_ext_w, win_ext_h = abs(w), abs(h)
+
+        # Resolution scaling (300 DPI equivalent)
+        if target_width_pt and target_height_pt:
+            scale = 300.0 / 72.0
+            img_w = max(20, int(target_width_pt * scale))
+            img_h = max(20, int(target_height_pt * scale))
+        else:
+            scale_factor = (300.0 / float(inch)) if (inch and inch > 0) else 0.2
+            img_w = max(20, int(win_ext_w * scale_factor))
+            img_h = max(20, int(win_ext_h * scale_factor))
+
+        img = PILImage.new('RGB', (img_w, img_h), (255, 255, 255))
+        draw = ImageDraw.Draw(img)
+
+        def tx(x):
+            return int((x - win_org_x) * img_w / win_ext_w) if win_ext_w > 0 else 0
+
+        def ty(y):
+            return int((y - win_org_y) * img_h / win_ext_h) if win_ext_h > 0 else 0
+
+        def decode_color(val):
+            return (val & 0xff, (val >> 8) & 0xff, (val >> 16) & 0xff)
+
+        objects = {}
+        current_pen = {'color': (0, 0, 0), 'width': 1}
+        current_brush = {'color': None}
+        current_font = {'family': 'Times New Roman', 'size': 14, 'bold': False, 'italic': False}
+        text_color = (0, 0, 0)
+        cur_pos = (0, 0)
+
+        for func, data in records:
+            if func == 0x02fb:  # CREATEFONTINDIRECT
+                if len(data) >= 18:
+                    h, w, esc, orient, weight, italic, under, strike, charset = struct.unpack('<hhhhhBBBB', data[:14])
+                    facename = data[18:].split(b'\x00')[0].decode('latin1', errors='ignore')
+                    f_size_px = int(abs(h) * img_h / win_ext_h) if win_ext_h > 0 and h != 0 else 14
+                    font_obj = {
+                        'type': 'font',
+                        'family': facename or 'Times New Roman',
+                        'size': max(10, f_size_px),
+                        'bold': weight >= 600,
+                        'italic': bool(italic)
+                    }
+                    slot = 0
+                    while slot in objects: slot += 1
+                    objects[slot] = font_obj
+
+            elif func == 0x02fa:  # CREATEPENINDIRECT
+                if len(data) >= 8:
+                    style, w_x, w_y, color_val = struct.unpack('<HHHI', data[:10]) if len(data) >= 10 else (0, 1, 1, 0)
+                    pen_w = max(1, int(w_x * img_w / win_ext_w)) if win_ext_w > 0 else 1
+                    pen_obj = {
+                        'type': 'pen',
+                        'color': decode_color(color_val),
+                        'width': pen_w
+                    }
+                    slot = 0
+                    while slot in objects: slot += 1
+                    objects[slot] = pen_obj
+
+            elif func == 0x02fc:  # CREATEBRUSHINDIRECT
+                if len(data) >= 8:
+                    style, color_val, hatch = struct.unpack('<HIH', data[:8])
+                    brush_obj = {
+                        'type': 'brush',
+                        'color': None if style == 1 else decode_color(color_val)
+                    }
+                    slot = 0
+                    while slot in objects: slot += 1
+                    objects[slot] = brush_obj
+
+            elif func == 0x012d:  # SELECTOBJECT
+                if len(data) >= 2:
+                    idx = struct.unpack('<H', data[:2])[0]
+                    obj = objects.get(idx)
+                    if obj:
+                        if obj['type'] == 'font': current_font = obj
+                        elif obj['type'] == 'pen': current_pen = obj
+                        elif obj['type'] == 'brush': current_brush = obj
+
+            elif func == 0x01f0:  # DELETEOBJECT
+                if len(data) >= 2:
+                    idx = struct.unpack('<H', data[:2])[0]
+                    objects.pop(idx, None)
+
+            elif func == 0x0209:  # SETTEXTCOLOR
+                if len(data) >= 4:
+                    text_color = decode_color(struct.unpack('<I', data[:4])[0])
+
+            elif func == 0x0214:  # MOVETO
+                if len(data) >= 4:
+                    y, x = struct.unpack('<hh', data[:4])
+                    cur_pos = (tx(x), ty(y))
+
+            elif func == 0x0213:  # LINETO
+                if len(data) >= 4:
+                    y, x = struct.unpack('<hh', data[:4])
+                    target_p = (tx(x), ty(y))
+                    draw.line([cur_pos, target_p], fill=current_pen['color'], width=current_pen['width'])
+                    cur_pos = target_p
+
+            elif func == 0x041b:  # RECTANGLE
+                if len(data) >= 8:
+                    b, r, t, l = struct.unpack('<hhhh', data[:8])
+                    draw.rectangle([(tx(l), ty(t)), (tx(r), ty(b))], fill=current_brush['color'], outline=current_pen['color'], width=current_pen['width'])
+
+            elif func == 0x0324:  # POLYGON
+                if len(data) >= 2:
+                    num_pts = struct.unpack('<h', data[:2])[0]
+                    if len(data) >= 2 + num_pts * 4:
+                        pts = [(tx(struct.unpack('<h', data[2 + i*4 : 4 + i*4])[0]), ty(struct.unpack('<h', data[4 + i*4 : 6 + i*4])[0])) for i in range(num_pts)]
+                        draw.polygon(pts, fill=current_brush['color'], outline=current_pen['color'])
+
+            elif func == 0x0325:  # POLYLINE
+                if len(data) >= 2:
+                    num_pts = struct.unpack('<h', data[:2])[0]
+                    if len(data) >= 2 + num_pts * 4:
+                        pts = [(tx(struct.unpack('<h', data[2 + i*4 : 4 + i*4])[0]), ty(struct.unpack('<h', data[4 + i*4 : 6 + i*4])[0])) for i in range(num_pts)]
+                        draw.line(pts, fill=current_pen['color'], width=current_pen['width'])
+
+            elif func == 0x0538:  # POLYPOLYGON
+                if len(data) >= 2:
+                    num_polys = struct.unpack('<h', data[:2])[0]
+                    counts_offset = 2
+                    pts_offset = counts_offset + num_polys * 2
+                    if len(data) >= pts_offset:
+                        poly_counts = struct.unpack(f'<{num_polys}h', data[counts_offset:pts_offset])
+                        curr_pt_offset = pts_offset
+                        for count in poly_counts:
+                            if curr_pt_offset + count * 4 <= len(data):
+                                pts = [(tx(struct.unpack('<h', data[curr_pt_offset + i*4 : curr_pt_offset + i*4 + 2])[0]),
+                                        ty(struct.unpack('<h', data[curr_pt_offset + i*4 + 2 : curr_pt_offset + (i+1)*4])[0])) for i in range(count)]
+                                curr_pt_offset += count * 4
+                                draw.polygon(pts, fill=current_brush['color'], outline=current_pen['color'])
+
+            elif func == 0x0a32:  # EXTTEXTOUT
+                if len(data) >= 8:
+                    y, x, count, options = struct.unpack('<hhhh', data[:8])
+                    str_offset = 8
+                    if (options & 6) != 0 and len(data) >= 16:
+                        str_offset = 16
+                    raw_bytes = data[str_offset : str_offset + count]
+
+                    pad = count % 2
+                    dx_offset = str_offset + count + pad
+                    has_dx = len(data) >= dx_offset + count * 2
+
+                    dx_array = []
+                    if has_dx:
+                        dx_array = struct.unpack(f'<{count}h', data[dx_offset : dx_offset + count * 2])
+
+                    f_size = max(12, current_font['size'])
+                    try:
+                        font = ImageFont.truetype("times.ttf", f_size)
+                    except Exception:
+                        try:
+                            font = ImageFont.truetype("DejaVuSerif.ttf", f_size)
+                        except Exception:
+                            font = ImageFont.load_default()
+
+                    cur_ch_x = x
+                    for i, b in enumerate(raw_bytes):
+                        ch_str = chr(b) if 32 <= b <= 126 else (chr(b) if b != 0 else '')
+                        if ch_str:
+                            draw.text((tx(cur_ch_x), ty(y) - int(f_size * 0.8)), ch_str, font=font, fill=text_color)
+                        if dx_array and i < len(dx_array):
+                            cur_ch_x += dx_array[i]
+
+        return img
+    except Exception as e:
+        print(f"Warning: WMF parsing error: {e}")
+        return None
+
+
 def _process_equation_ole_image(part_blob, file_id, eq_filename, eq_dir, target_width_pt=None, target_height_pt=None):
     """
     Convert legacy Equation Editor 3.0 / MathType image (WMF/EMF/PNG) to a crisp, high-resolution PNG asset.
-    Uses Windows GDI+ for 100% vector accuracy and zero black-bar rasterization artifacts.
+    Uses Windows GDI+ on Windows, and a pure-Python WMF rasterizer on Linux (Render).
     """
     os.makedirs(eq_dir, exist_ok=True)
     out_path = os.path.join(eq_dir, eq_filename)
@@ -469,7 +695,7 @@ def _process_equation_ole_image(part_blob, file_id, eq_filename, eq_dir, target_
         except Exception:
             pass
 
-    # Method 1: High-Fidelity Windows GDI+ Rasterization
+    # Method 1: High-Fidelity Windows GDI+ Rasterization (if running on Windows)
     if _gdiplus_available:
         try:
             temp_wmf = out_path + '.tmp.wmf'
@@ -530,7 +756,17 @@ def _process_equation_ole_image(part_blob, file_id, eq_filename, eq_dir, target_
                 try: os.remove(temp_wmf)
                 except Exception: pass
 
-    # Method 2: Pillow Fallback with white background
+    # Method 2: Pure-Python WMF Rasterizer (Cross-platform, Works on Linux / Render)
+    try:
+        wmf_img = _render_wmf_to_pil(part_blob, target_width_pt=target_width_pt, target_height_pt=target_height_pt)
+        if wmf_img:
+            trimmed = _trim_white_borders(wmf_img)
+            trimmed.save(out_path, format='PNG')
+            return out_path, trimmed.width, trimmed.height
+    except Exception as e:
+        print(f"Warning: Pure Python WMF render exception: {e}")
+
+    # Method 3: Standard Pillow Fallback (for embedded PNG, JPEG, GIF, BMP)
     try:
         img = PILImage.open(BytesIO(part_blob))
         if img.mode != 'RGB':
@@ -760,8 +996,8 @@ def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
                 except Exception as e:
                     print(f"Warning: Exception parsing OMML equation in row {row_idx}: {e}")
 
-            elif tag == 'object':
-                # Direct OLE Object
+            elif tag in ('object', 'pict'):
+                # Direct OLE Object or legacy picture
                 if current_text:
                     content.append({'type': 'text', 'value': current_text})
                     current_text = ""
@@ -777,7 +1013,7 @@ def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
                     r_tag = r_child.tag.split('}')[-1] if '}' in r_child.tag else r_child.tag
                     if r_tag == 't':
                         current_text += (r_child.text or '')
-                    elif r_tag == 'object':
+                    elif r_tag in ('object', 'pict'):
                         if current_text:
                             content.append({'type': 'text', 'value': current_text})
                             current_text = ""
