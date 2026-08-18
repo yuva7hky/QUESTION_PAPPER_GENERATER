@@ -859,8 +859,8 @@ def omml_to_latex(elem):
             if end is not None: end_chr = end.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', end_chr)
         e_elems = elem.findall('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         inner = ''.join(omml_to_latex(e) for e in e_elems)
-        beg_map = {'(': r'\left(', '[': r'\left[', '{': r'\left\{', '|': r'\left|'}
-        end_map = {')': r'\right)', ']': r'\right]', '}': r'\right\}', '|': r'\right|'}
+        beg_map = {'(': r'\left(', '[': r'\left[', '{': r'\left\{', '|': r'\left|', '': r'\left.'}
+        end_map = {')': r'\right)', ']': r'\right]', '}': r'\right\}', '|': r'\right|', '': r'\right.'}
         b_str = beg_map.get(beg_chr, beg_chr)
         e_str = end_map.get(end_chr, end_chr)
         return f'{b_str}{inner}{e_str}'
@@ -885,7 +885,12 @@ def omml_to_latex(elem):
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         fname_str = omml_to_latex(fname_elem) if fname_elem is not None else ''
         e_str = omml_to_latex(e_elem) if e_elem is not None else ''
-        return f'\\{fname_str}{{{e_str}}}'
+        std_funcs = {'sin', 'cos', 'tan', 'sec', 'csc', 'cot', 'sinh', 'cosh', 'tanh', 'ln', 'log', 'exp', 'lim', 'min', 'max', 'det', 'gcd', 'deg', 'dim', 'hom', 'ker', 'arg'}
+        fn_clean = fname_str.strip().replace('\\', '')
+        if fn_clean in std_funcs:
+            return f'\\{fn_clean}{{{e_str}}}'
+        else:
+            return f'{fname_str}{{{e_str}}}'
 
     elif tag == 'rad':
         deg_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}deg')
