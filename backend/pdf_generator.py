@@ -47,71 +47,121 @@ def _resolve_equation_path(eq_url, base_dir=BASE_DIR):
     return eq_url
 
 
-def _build_pdf_markup(q_or_text, prefix=""):
-    """Build ReportLab paragraph markup with inline equation images."""
+def _build_question_flowables(q_or_text, prefix, styles, base_dir=BASE_DIR, max_col_w=310):
+    """
+    Build a list of ReportLab flowables for a question cell.
+    - Inline equations: embedded as <img> tags within Paragraph
+    - Block equations (matrices/systems): as separate RLImage flowables with Spacers
+    - Diagram images: as separate RLImage flowables
+    This prevents the overlapping/overriding layout bug that occurs when
+    large images are embedded as inline <img> inside Paragraph text.
+    """
+    flowables = []
+
     if isinstance(q_or_text, dict):
         content = q_or_text.get('content')
         if content:
-            parts = [prefix]
+            # Split content into segments: runs of text+inline_eq, and block_eq breaks
+            # Each segment gets its own Paragraph; block eqs get their own RLImage
+            current_inline_parts = [prefix]
+
             for item in content:
                 if item['type'] == 'text':
-                    parts.append(html_escape(item['value']))
+                    current_inline_parts.append(html_escape(item['value']))
+
                 elif item['type'] == 'equation':
                     local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
-                    if local_path and os.path.exists(local_path):
-                        is_block = item.get('is_block', False)
-                        # Use exact original document dimensions (from shape style attribute)
-                        # These preserve the exact sizing that was in the source question bank
-                        disp_w_pt = float(item.get('orig_w_pt') or item.get('width_pt') or 40.0)
-                        disp_h_pt = float(item.get('orig_h_pt') or item.get('height_pt') or 14.0)
+                    is_block = item.get('is_block', False)
 
-                        # Guard: limit to PDF question column width (max ~290pt)
-                        if disp_w_pt > 290.0:
-                            scale = 290.0 / disp_w_pt
-                            disp_w_pt = 290.0
-                            disp_h_pt = disp_h_pt * scale
+                    if is_block:
+                        # First flush any accumulated inline text as a Paragraph
+                        combined = ''.join(current_inline_parts).strip()
+                        if combined:
+                            flowables.append(Paragraph(combined, styles['CellText']))
+                        current_inline_parts = []  # reset
 
-                        if is_block:
-                            # Block equation: vertically aligned so baseline doesn't clip
-                            valign_offset = max(-5.0, -(disp_h_pt * 0.5))
-                            parts.append(f"<img src='{local_path}' width='{disp_w_pt:.1f}' height='{disp_h_pt:.1f}' valign='{valign_offset:.1f}'/>")
+                        # Block equation as a standalone RLImage
+                        if local_path and os.path.exists(local_path):
+                            try:
+                                disp_w_pt = float(item.get('orig_w_pt') or item.get('width_pt') or 60.0)
+                                disp_h_pt = float(item.get('orig_h_pt') or item.get('height_pt') or 40.0)
+                                # Clamp to column width
+                                if disp_w_pt > max_col_w:
+                                    scale = max_col_w / disp_w_pt
+                                    disp_w_pt = max_col_w
+                                    disp_h_pt = disp_h_pt * scale
+                                img_flowable = RLImage(local_path, width=disp_w_pt, height=disp_h_pt)
+                                img_flowable.hAlign = 'LEFT'
+                                flowables.append(Spacer(1, 3))
+                                flowables.append(img_flowable)
+                                flowables.append(Spacer(1, 3))
+                            except Exception as e:
+                                print(f"Warning: Could not embed block equation in PDF: {e}")
                         else:
-                            # Inline equation: small vertical offset to align with text baseline
-                            parts.append(f"<img src='{local_path}' width='{disp_w_pt:.1f}' height='{disp_h_pt:.1f}' valign='-2.5'/>")
+                            latex = item.get('latex', '')
+                            flowables.append(Paragraph(f" [{latex}] " if latex else " [Equation] ", styles['CellText']))
+
                     else:
-                        latex = item.get('latex', '')
-                        parts.append(f" ${html_escape(latex)}$ " if latex else " [Equation] ")
-            return "".join(parts)
+                        # Inline equation: embed as <img> tag in the current paragraph
+                        if local_path and os.path.exists(local_path):
+                            disp_w_pt = float(item.get('orig_w_pt') or item.get('width_pt') or 20.0)
+                            disp_h_pt = float(item.get('orig_h_pt') or item.get('height_pt') or 12.0)
+                            # Clamp inline equations to a reasonable text-line height
+                            # If the image is taller than ~20pt it may still overlap; cap it
+                            if disp_h_pt > 18.0:
+                                scale = 18.0 / disp_h_pt
+                                disp_h_pt = 18.0
+                                disp_w_pt = disp_w_pt * scale
+                            if disp_w_pt > max_col_w:
+                                scale = max_col_w / disp_w_pt
+                                disp_w_pt = max_col_w
+                                disp_h_pt = disp_h_pt * scale
+                            current_inline_parts.append(
+                                f"<img src='{local_path}' width='{disp_w_pt:.1f}' height='{disp_h_pt:.1f}' valign='-3'/>"
+                            )
+                        else:
+                            latex = item.get('latex', '')
+                            current_inline_parts.append(f" ${html_escape(latex)}$ " if latex else " [Eq] ")
+
+            # Flush any remaining inline content
+            combined = ''.join(current_inline_parts).strip()
+            if combined:
+                flowables.append(Paragraph(combined, styles['CellText']))
+
         else:
-            return prefix + html_escape(q_or_text.get('text', ''))
+            # Plain text only
+            text = html_escape(q_or_text.get('text', ''))
+            flowables.append(Paragraph(prefix + text, styles['CellText']))
     else:
-        return prefix + str(q_or_text)
+        flowables.append(Paragraph(prefix + html_escape(str(q_or_text)), styles['CellText']))
+
+    # Append diagram/uploaded images
+    images = q_or_text.get('images', []) if isinstance(q_or_text, dict) else []
+    for img_url in images:
+        local_path = _resolve_local_path(img_url, base_dir)
+        if local_path and os.path.exists(local_path):
+            try:
+                with PILImage.open(local_path) as pil_img:
+                    w, h = pil_img.size
+                if w > 0 and h > 0:
+                    scale = min(float(max_col_w) / float(w), 200.0 / float(h), 1.0)
+                    scaled_w = max(80.0, w * scale)
+                    scaled_h = max(30.0, h * scale)
+                    img_flowable = RLImage(local_path, width=scaled_w, height=scaled_h)
+                    img_flowable.hAlign = 'CENTER'
+                    flowables.append(Spacer(1, 3))
+                    flowables.append(img_flowable)
+                    flowables.append(Spacer(1, 3))
+            except Exception as e:
+                print(f"Warning: Could not embed image {local_path} in PDF: {e}")
+
+    if not flowables:
+        flowables = [Paragraph(prefix, styles['CellText'])]
+
+    # Return single flowable or list
+    return flowables if len(flowables) > 1 else flowables[0]
 
 
-def _make_question_cell(text_markup, images, styles, base_dir=BASE_DIR, max_w=310, max_h=220):
-    """Create cell content containing question text and any associated diagram flowables."""
-    flowables = [Paragraph(text_markup, styles['CellText'])]
-    if images:
-        for img_url in images:
-            local_path = _resolve_local_path(img_url, base_dir)
-            if local_path and os.path.exists(local_path):
-                try:
-                    with PILImage.open(local_path) as pil_img:
-                        w, h = pil_img.size
-                    if w > 0 and h > 0:
-                        scale = min(float(max_w) / float(w), float(max_h) / float(h), 1.0)
-                        scaled_w = max(100.0, w * scale)
-                        scaled_h = max(40.0, h * scale)
-                        img_flowable = RLImage(local_path, width=scaled_w, height=scaled_h)
-                        img_flowable.hAlign = 'CENTER'
-                        flowables.append(Spacer(1, 3))
-                        flowables.append(img_flowable)
-                        flowables.append(Spacer(1, 3))
-                except Exception as e:
-                    print(f"Warning: Could not embed image {local_path} in PDF: {e}")
-    if len(flowables) == 1:
-        return flowables[0]
-    return flowables
 
 
 def generate_pdf(paper_data, output_path=None):
@@ -272,7 +322,7 @@ def generate_pdf(paper_data, output_path=None):
         for q in part_a['questions']:
             a_data.append([
                 Paragraph(str(q['q_no']), styles['CellCenter']),
-                _make_question_cell(_build_pdf_markup(q), q.get('images', []), styles),
+                _build_question_flowables(q, '', styles),
                 Paragraph(str(q['co']), styles['CellCenter']),
                 Paragraph(str(q['marks']), styles['CellCenter']),
                 Paragraph(str(q['k_level']), styles['CellCenter']),
@@ -304,7 +354,7 @@ def generate_pdf(paper_data, output_path=None):
 
             b_data.append([
                 Paragraph(f"{q_no}.", styles['CellCenter']),
-                _make_question_cell(_build_pdf_markup(a_q, prefix="<b>a)</b> "), a_q.get('images', []), styles),
+                _build_question_flowables(a_q, '<b>a)</b> ', styles),
                 Paragraph(str(a_q['co']), styles['CellCenter']),
                 Paragraph(str(a_q['marks']), styles['CellCenter']),
                 Paragraph(str(a_q['k_level']), styles['CellCenter']),
@@ -316,7 +366,7 @@ def generate_pdf(paper_data, output_path=None):
             ])
             b_data.append([
                 '',
-                _make_question_cell(_build_pdf_markup(b_q, prefix="<b>b)</b> "), b_q.get('images', []), styles),
+                _build_question_flowables(b_q, '<b>b)</b> ', styles),
                 Paragraph(str(b_q['co']), styles['CellCenter']),
                 Paragraph(str(b_q['marks']), styles['CellCenter']),
                 Paragraph(str(b_q['k_level']), styles['CellCenter']),
@@ -348,7 +398,7 @@ def generate_pdf(paper_data, output_path=None):
 
             c_data.append([
                 Paragraph(f"{q_no}.", styles['CellCenter']),
-                _make_question_cell(_build_pdf_markup(a_q, prefix="<b>a)</b> "), a_q.get('images', []), styles),
+                _build_question_flowables(a_q, '<b>a)</b> ', styles),
                 Paragraph(str(a_q['co']), styles['CellCenter']),
                 Paragraph(str(a_q['marks']), styles['CellCenter']),
                 Paragraph(str(a_q['k_level']), styles['CellCenter']),
@@ -360,7 +410,7 @@ def generate_pdf(paper_data, output_path=None):
             ])
             c_data.append([
                 '',
-                _make_question_cell(_build_pdf_markup(b_q, prefix="<b>b)</b> "), b_q.get('images', []), styles),
+                _build_question_flowables(b_q, '<b>b)</b> ', styles),
                 Paragraph(str(b_q['co']), styles['CellCenter']),
                 Paragraph(str(b_q['marks']), styles['CellCenter']),
                 Paragraph(str(b_q['k_level']), styles['CellCenter']),

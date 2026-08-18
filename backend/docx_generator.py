@@ -350,9 +350,24 @@ def _resolve_equation_path(eq_url, base_dir=BASE_DIR):
 
 
 def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+    """
+    Fill a Word table cell with question content.
+    - Inline equations (OMML or small image): embedded within the current text paragraph
+    - Block equations (matrices, systems): placed in their OWN paragraph within the cell,
+      with a short spacer before and after. Text continues in a new paragraph after the block.
+    This prevents rows from collapsing and text from overlapping in the output.
+    """
+    def _new_para(c):
+        """Add a new paragraph to cell with standard formatting."""
+        pp = c.add_paragraph()
+        pp.alignment = align
+        pp.paragraph_format.space_after = Pt(1)
+        pp.paragraph_format.space_before = Pt(1)
+        return pp
+
     p = cell.paragraphs[0]
     p.alignment = align
-    p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.space_after = Pt(1)
     p.paragraph_format.space_before = Pt(1)
 
     if prefix:
@@ -364,38 +379,56 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
             if item['type'] == 'text':
                 run = p.add_run(item['value'])
                 _set_font(run, bold=bold)
+
             elif item['type'] == 'equation':
                 omml_xml = item.get('omml')
                 is_block = item.get('is_block', False)
                 inserted = False
 
+                # ── OMML equations (native Word math, always inline-capable) ──
                 if omml_xml and not item.get('is_legacy_ole'):
                     try:
                         omath_elem = parse_xml(omml_xml)
-                        p._p.append(omath_elem)
+                        if is_block:
+                            # Flush current paragraph; add block math on its own paragraph
+                            p_block = _new_para(cell)
+                            p_block.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                            p_block._p.append(omath_elem)
+                            # Start a fresh paragraph for any following text
+                            p = _new_para(cell)
+                        else:
+                            p._p.append(omath_elem)
                         inserted = True
                     except Exception as e:
                         print(f"Warning: Could not parse OMML XML into DOCX: {e}")
 
+                # ── Image equations (OLE WMF rasterized or OMML fallback) ──
                 if not inserted:
                     local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
                     if local_path and os.path.exists(local_path):
                         try:
-                            # Use the exact original document dimensions for the equation image.
-                            # orig_w_pt / orig_h_pt come directly from the shape style attribute
-                            # in the source docx (e.g., style="width:67.2pt;height:56.4pt").
-                            # These are the authoritative sizes that match the original format.
                             disp_w_pt = float(item.get('orig_w_pt') or item.get('width_pt') or 40.0)
                             disp_h_pt = float(item.get('orig_h_pt') or item.get('height_pt') or 14.0)
-
-                            # Guard: limit to page column width (max ~260pt for question col)
+                            # Guard: limit to question column width (~260pt)
                             if disp_w_pt > 260.0:
                                 scale = 260.0 / disp_w_pt
                                 disp_w_pt = 260.0
                                 disp_h_pt = disp_h_pt * scale
 
-                            run = p.add_run()
-                            run.add_picture(local_path, width=Pt(disp_w_pt), height=Pt(disp_h_pt))
+                            if is_block:
+                                # Block equation: own paragraph, left-aligned
+                                p_block = _new_para(cell)
+                                p_block.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                                p_block.paragraph_format.space_before = Pt(3)
+                                p_block.paragraph_format.space_after = Pt(3)
+                                run = p_block.add_run()
+                                run.add_picture(local_path, width=Pt(disp_w_pt), height=Pt(disp_h_pt))
+                                # New paragraph for any text that follows the block
+                                p = _new_para(cell)
+                            else:
+                                # Inline equation: embed in current paragraph run
+                                run = p.add_run()
+                                run.add_picture(local_path, width=Pt(disp_w_pt), height=Pt(disp_h_pt))
                         except Exception as e:
                             print(f"Warning: Could not insert equation image into DOCX: {e}")
                             latex = item.get('latex', '')
@@ -405,6 +438,7 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
         text = q_or_text.get('text', '') if isinstance(q_or_text, dict) else str(q_or_text)
         run = p.add_run(text)
         _set_font(run, bold=bold)
+
 
 
 def _set_cell_text(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
