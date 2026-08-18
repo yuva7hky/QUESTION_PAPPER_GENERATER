@@ -366,7 +366,9 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
                 _set_font(run, bold=bold, size=11)
             elif item['type'] == 'equation':
                 omml_xml = item.get('omml')
+                is_block = item.get('is_block', False)
                 inserted = False
+
                 if omml_xml and not item.get('is_legacy_ole'):
                     try:
                         omath_elem = parse_xml(omml_xml)
@@ -381,19 +383,41 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
                         try:
                             orig_h = float(item.get('height_pt') or 14.0)
                             ar = float(item.get('aspect_ratio') or 1.0)
-                            is_block = item.get('is_block', False) or (orig_h > 22.0)
+                            
                             if is_block:
-                                h_pt = max(22.0, min(orig_h * 0.85, 48.0))
+                                # Centered block equation on its own line
+                                p_math = cell.add_paragraph()
+                                p_math.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                p_math.paragraph_format.space_before = Pt(3)
+                                p_math.paragraph_format.space_after = Pt(3)
+                                h_pt = max(24.0, min(orig_h * 0.85, 60.0))
+                                w_pt = min(h_pt * ar, 260.0)
+                                run = p_math.add_run()
+                                run.add_picture(local_path, width=Pt(w_pt), height=Pt(h_pt))
+                                # Continue following text on a new paragraph
+                                p = cell.add_paragraph()
+                                p.alignment = align
+                                p.paragraph_format.space_after = Pt(2)
+                                p.paragraph_format.space_before = Pt(1)
                             else:
-                                h_pt = max(10.0, min(orig_h * 0.85, 15.0))
-                            w_pt = max(6.0, min(h_pt * ar, 310.0))
-                            run = p.add_run()
-                            run.add_picture(local_path, width=Pt(w_pt), height=Pt(h_pt))
+                                # Proportional inline equation
+                                h_pt = max(9.5, min(orig_h * 0.8, 13.5))
+                                w_pt = min(h_pt * ar, 240.0)
+                                run = p.add_run()
+                                run.add_picture(local_path, width=Pt(w_pt), height=Pt(h_pt))
                         except Exception as e:
                             print(f"Warning: Could not insert equation image into DOCX: {e}")
                             latex = item.get('latex', '')
                             run = p.add_run(f" ${latex}$ " if latex else " [Equation] ")
                             _set_font(run, bold=bold, size=11)
+        # Remove any trailing empty paragraph created after a block equation
+        while len(cell.paragraphs) > 1:
+            last_p = cell.paragraphs[-1]
+            if not last_p.text.strip() and len(last_p.runs) == 0 and len(last_p._p.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')) == 0:
+                p_elem = last_p._p
+                p_elem.getparent().remove(p_elem)
+            else:
+                break
     else:
         text = q_or_text.get('text', '') if isinstance(q_or_text, dict) else str(q_or_text)
         run = p.add_run(text)
