@@ -711,6 +711,10 @@ def _render_wmf_to_pil(wmf_blob, target_width_pt=None, target_height_pt=None):
                             draw.text((tx(cur_ch_wmf_x), ty(draw_wmf_y) - int(f_size * 0.8)), ch_str, font=font, fill=text_color)
                         if dx_array and i < len(dx_array):
                             cur_ch_wmf_x += dx_array[i]
+                        else:
+                            ch_adv_px = font.getlength(ch_str) if (ch_str and hasattr(font, 'getlength')) else (f_size * 0.55)
+                            ch_adv_wmf = int(ch_adv_px * win_ext_w / img_w) if img_w > 0 else int(win_ext_h * 0.08)
+                            cur_ch_wmf_x += max(1, ch_adv_wmf)
 
                     cur_wmf_x = cur_ch_wmf_x
                     cur_pos = (tx(cur_wmf_x), ty(draw_wmf_y))
@@ -1110,7 +1114,10 @@ def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
                 for r_child in child:
                     r_tag = r_child.tag.split('}')[-1] if '}' in r_child.tag else r_child.tag
                     if r_tag == 't':
-                        current_text += (r_child.text or '')
+                        t_val = r_child.text or ''
+                        # Strip Private Use Area characters (bullet boxes / Wingdings)
+                        t_val = re.sub(r'[\ue000-\uf8ff]', '', t_val)
+                        current_text += t_val
                     elif r_tag in ('object', 'pict'):
                         if current_text:
                             content.append({'type': 'text', 'value': current_text})
@@ -1214,7 +1221,7 @@ def _extract_ole_equation_item(obj_elem, doc, file_id, eq_dir, row_idx, eq_numbe
     h_pt = h_pt or (float(img_h) * (72.0 / 300.0) if img_h > 0 else 18.0)
     aspect_ratio = (w_pt / h_pt) if (h_pt > 0) else ((img_w / float(img_h)) if img_h > 0 else 1.0)
     url = f"/api/equations/{file_id}/{eq_filename}"
-    is_block = (h_pt >= 22.0)
+    is_block = (h_pt >= 36.0) or (aspect_ratio < 1.8 and h_pt >= 24.0 and w_pt >= 40.0)
 
     return {
         'type': 'equation',
