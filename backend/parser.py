@@ -534,11 +534,43 @@ def _render_wmf_to_pil(wmf_blob, target_width_pt=None, target_height_pt=None):
         current_pen = {'color': (0, 0, 0), 'width': 1}
         current_brush = {'color': None}
         current_font = {'family': 'Times New Roman', 'size': 14, 'bold': False, 'italic': False}
+        text_align = 0
         text_color = (0, 0, 0)
+        cur_wmf_x, cur_wmf_y = 0, 0
         cur_pos = (0, 0)
 
+        sym_map = {
+            0x2d: '−', 0x2b: '+', 0x3d: '=', 0xb1: '±', 0xd7: '×', 0xf7: '÷', 0xb9: '≠',
+            0xa3: '≤', 0xb3: '≥', 0xae: '→', 0xac: '←', 0xde: '⇒', 0xce: '∈', 0xcf: '∉',
+            0xb0: '°', 0xa5: '∞', 0xb6: '∂', 0xd1: '∇', 0xf2: '∫',
+            0x61: 'α', 0x62: 'β', 0x67: 'γ', 0x64: 'δ', 0x65: 'ε', 0x71: 'θ', 0x6c: 'λ',
+            0x6d: 'μ', 0x70: 'π', 0x73: 'σ', 0x74: 'τ', 0x66: 'φ', 0x77: 'ω', 0x44: 'Δ',
+            0xe6: '⎡', 0xe7: '⎢', 0xe8: '⎣', 0xf6: '⎤', 0xf7: '⎥', 0xf8: '⎦',
+            0xe9: '⎛', 0xea: '⎜', 0xeb: '⎝', 0xf9: '⎞', 0xfa: '⎟', 0xfb: '⎠',
+            0xec: '⎧', 0xed: '⎨', 0xee: '⎩', 0xef: '⎪', 0xfc: '⎫', 0xfd: '⎬', 0xfe: '⎭'
+        }
+
+        def _get_font(f_size):
+            candidates = [
+                'times.ttf',
+                'DejaVuSerif.ttf',
+                'LiberationSerif-Regular.ttf',
+                '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf',
+                '/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf',
+                '/usr/share/fonts/truetype/freefont/FreeSerif.ttf'
+            ]
+            for c in candidates:
+                try:
+                    return ImageFont.truetype(c, f_size)
+                except Exception:
+                    continue
+            return ImageFont.load_default()
+
         for func, data in records:
-            if func == 0x02fb:  # CREATEFONTINDIRECT
+            if func == 0x012e and len(data) >= 2:  # SETTEXTALIGN
+                text_align = struct.unpack('<H', data[:2])[0]
+
+            elif func == 0x02fb:  # CREATEFONTINDIRECT
                 if len(data) >= 18:
                     h, w, esc, orient, weight, italic, under, strike, charset = struct.unpack('<hhhhhBBBB', data[:14])
                     facename = data[18:].split(b'\x00')[0].decode('latin1', errors='ignore')
@@ -599,6 +631,7 @@ def _render_wmf_to_pil(wmf_blob, target_width_pt=None, target_height_pt=None):
             elif func == 0x0214:  # MOVETO
                 if len(data) >= 4:
                     y, x = struct.unpack('<hh', data[:4])
+                    cur_wmf_x, cur_wmf_y = x, y
                     cur_pos = (tx(x), ty(y))
 
             elif func == 0x0213:  # LINETO
@@ -607,6 +640,7 @@ def _render_wmf_to_pil(wmf_blob, target_width_pt=None, target_height_pt=None):
                     target_p = (tx(x), ty(y))
                     draw.line([cur_pos, target_p], fill=current_pen['color'], width=current_pen['width'])
                     cur_pos = target_p
+                    cur_wmf_x, cur_wmf_y = x, y
 
             elif func == 0x041b:  # RECTANGLE
                 if len(data) >= 8:
@@ -658,22 +692,28 @@ def _render_wmf_to_pil(wmf_blob, target_width_pt=None, target_height_pt=None):
                     if has_dx:
                         dx_array = struct.unpack(f'<{count}h', data[dx_offset : dx_offset + count * 2])
 
-                    f_size = max(12, current_font['size'])
-                    try:
-                        font = ImageFont.truetype("times.ttf", f_size)
-                    except Exception:
-                        try:
-                            font = ImageFont.truetype("DejaVuSerif.ttf", f_size)
-                        except Exception:
-                            font = ImageFont.load_default()
+                    # Determine drawing origin (respect TA_UPDATECP or MOVETO position)
+                    use_cp = bool(text_align & 1) or (x == 0 and y == 0 and (cur_wmf_x != 0 or cur_wmf_y != 0))
+                    draw_wmf_x = cur_wmf_x if use_cp else x
+                    draw_wmf_y = cur_wmf_y if use_cp else y
 
-                    cur_ch_x = x
+                    f_size = max(12, current_font['size'])
+                    font = _get_font(f_size)
+                    is_symbol = 'symbol' in current_font.get('family', '').lower()
+
+                    cur_ch_wmf_x = draw_wmf_x
                     for i, b in enumerate(raw_bytes):
-                        ch_str = chr(b) if 32 <= b <= 126 else (chr(b) if b != 0 else '')
+                        if is_symbol and b in sym_map:
+                            ch_str = sym_map[b]
+                        else:
+                            ch_str = chr(b) if 32 <= b <= 126 else (chr(b) if b != 0 else '')
                         if ch_str:
-                            draw.text((tx(cur_ch_x), ty(y) - int(f_size * 0.8)), ch_str, font=font, fill=text_color)
+                            draw.text((tx(cur_ch_wmf_x), ty(draw_wmf_y) - int(f_size * 0.8)), ch_str, font=font, fill=text_color)
                         if dx_array and i < len(dx_array):
-                            cur_ch_x += dx_array[i]
+                            cur_ch_wmf_x += dx_array[i]
+
+                    cur_wmf_x = cur_ch_wmf_x
+                    cur_pos = (tx(cur_wmf_x), ty(draw_wmf_y))
 
         return img
     except Exception as e:
