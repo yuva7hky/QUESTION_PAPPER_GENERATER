@@ -64,17 +64,16 @@ def _build_pdf_markup(q_or_text, prefix=""):
                         orig_w = float(item.get('width_pt') or (orig_h * ar))
                         is_block = item.get('is_block', False) or (orig_h > 22.0)
                         
-                        # In PDF, CellText fontSize is 8.5 pt with 11 pt leading
                         if is_block:
                             # Matrix / multiline / block formula
-                            h_pt = min(orig_h * (8.5 / 11.0), 42.0)
-                            w_pt = min(max(h_pt * ar, orig_w * (8.5 / 11.0)), 310.0)
-                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='middle'/>")
+                            h_pt = max(20.0, min(orig_h * 0.85, 48.0))
+                            w_pt = max(15.0, min(h_pt * ar, 290.0))
+                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='-10'/>")
                         else:
-                            # Inline single-line formula
-                            h_pt = max(8.0, min(orig_h * (8.5 / 11.0), 10.5))
-                            w_pt = max(5.0, min(h_pt * ar, 260.0))
-                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='-1.5'/>")
+                            # Inline formula (fractions, powers, roots, symbols)
+                            h_pt = max(9.5, min(orig_h * 0.85, 15.0))
+                            w_pt = max(6.0, min(h_pt * ar, 260.0))
+                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='-2.5'/>")
                     else:
                         latex = item.get('latex', '')
                         parts.append(f" ${html_escape(latex)}$ " if latex else " [Equation] ")

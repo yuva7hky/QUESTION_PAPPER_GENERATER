@@ -217,19 +217,41 @@ html, body {
   background: #94a3b8;
 }
 
-/* ── KaTeX Inline Equations ─────────────────────────────────── */
-/* Match equation font size to surrounding question text */
-.paper-preview .katex-inline .katex {
-  font-size: 1em;
+/* ── KaTeX & Math Equations ─────────────────────────────────── */
+.paper-preview .katex {
+  font-size: 1.02em;
+  line-height: 1.2;
 }
 
-/* Ensure inline equations don't add excessive vertical space */
 .paper-preview .katex-inline {
-  display: inline;
-  vertical-align: baseline;
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 1px;
+  max-width: 100%;
 }
 
-.paper-preview .katex-inline .katex-html {
-  display: inline;
-  white-space: nowrap;
+.paper-preview .katex-display {
+  margin: 0.3em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+}
+
+.paper-preview .equation-inline-img {
+  display: inline-block;
+  vertical-align: -0.22em;
+  height: 1.25em;
+  max-height: 1.5em;
+  max-width: 100%;
+  object-fit: contain;
+  margin: 0 2px;
+}
+
+.paper-preview .equation-block-img {
+  display: inline-block;
+  vertical-align: middle;
+  max-height: 5.5em;
+  max-width: 100%;
+  object-fit: contain;
+  margin: 4px 2px;
 }

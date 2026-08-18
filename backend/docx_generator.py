@@ -380,13 +380,15 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
                     if local_path and os.path.exists(local_path):
                         try:
                             orig_h = float(item.get('height_pt') or 14.0)
+                            ar = float(item.get('aspect_ratio') or 1.0)
                             is_block = item.get('is_block', False) or (orig_h > 22.0)
                             if is_block:
-                                h_pt = min(orig_h * 0.85, 45.0)
+                                h_pt = max(22.0, min(orig_h * 0.85, 48.0))
                             else:
-                                h_pt = max(9.0, min(orig_h * 0.85, 12.0))
+                                h_pt = max(10.0, min(orig_h * 0.85, 15.0))
+                            w_pt = max(6.0, min(h_pt * ar, 310.0))
                             run = p.add_run()
-                            run.add_picture(local_path, height=Pt(h_pt))
+                            run.add_picture(local_path, width=Pt(w_pt), height=Pt(h_pt))
                         except Exception as e:
                             print(f"Warning: Could not insert equation image into DOCX: {e}")
                             latex = item.get('latex', '')

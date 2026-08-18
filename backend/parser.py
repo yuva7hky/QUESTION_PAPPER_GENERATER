@@ -781,8 +781,9 @@ def _process_equation_ole_image(part_blob, file_id, eq_filename, eq_dir, target_
 
 def omml_to_latex(elem):
     """
-    Convert Word OMML math XML element to LaTeX string.
-    Supports matrices, delimiters, fractions, superscripts, subscripts, radicals, n-ary sums/integrals, functions.
+    Convert Word OMML math XML element to standard LaTeX string.
+    Supports matrices, delimiters, fractions, superscripts, subscripts, radicals,
+    n-ary sums/integrals/products, accents, over/under braces, functions, and equation arrays.
     """
     tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
     
@@ -793,10 +794,18 @@ def omml_to_latex(elem):
         # Matrix representation
         rows = []
         for mr in elem.findall('.//{http://schemas.openxmlformats.org/officeDocument/2006/math}mr'):
-            cells = [omml_to_latex(e) for e in mr.findall('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')]
+            cells = [omml_to_latex(e).strip() for e in mr.findall('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')]
             rows.append(' & '.join(cells))
         matrix_body = ' \\\\ '.join(rows)
         return f'\\begin{{matrix}} {matrix_body} \\end{{matrix}}'
+
+    elif tag == 'eqArr':
+        # Equation array / aligned equations
+        lines = []
+        for e in elem.findall('{http://schemas.openxmlformats.org/officeDocument/2006/math}e'):
+            lines.append(omml_to_latex(e).strip())
+        body = ' \\\\ '.join(lines)
+        return f'\\begin{{matrix}} {body} \\end{{matrix}}'
 
     elif tag == 'r':
         text = ''
@@ -805,14 +814,20 @@ def omml_to_latex(elem):
             if ctag == 't':
                 text += child.text or ''
         replacements = {
-            '…': r'\dots ', '∞': r'\infty ', '∑': r'\sum ', 'π': r'\pi ', '∏': r'\prod ',
-            'α': r'\alpha ', 'β': r'\beta ', 'γ': r'\gamma ', 'δ': r'\delta ', 'ε': r'\epsilon ',
-            'θ': r'\theta ', 'λ': r'\lambda ', 'μ': r'\mu ', 'σ': r'\sigma ', 'τ': r'\tau ',
-            'φ': r'\phi ', 'ω': r'\omega ', 'Δ': r'\Delta ', 'Σ': r'\Sigma ', 'Ω': r'\Omega ',
-            '≤': r'\le ', '≥': r'\ge ', '≠': r'\ne ', '×': r'\times ', '÷': r'\div ', '±': r'\pm ',
-            '≈': r'\approx ', '∈': r'\in ', '∉': r'\notin ', '→': r'\to ', '←': r'\gets ',
-            '⇒': r'\Rightarrow ', '⇔': r'\Leftrightarrow ', '∂': r'\partial ', '∇': r'\nabla ',
-            '∫': r'\int ', '∬': r'\iint ', '∭': r'\iiint ', '·': r'\cdot ', '°': r'^\circ '
+            '…': r'\dots ', '⋯': r'\cdots ', '⋮': r'\vdots ', '⋱': r'\ddots ',
+            '∞': r'\infty ', '∑': r'\sum ', 'π': r'\pi ', '∏': r'\prod ',
+            'α': r'\alpha ', 'β': r'\beta ', 'γ': r'\gamma ', 'δ': r'\delta ', 'ε': r'\epsilon ', 'ϵ': r'\varepsilon ',
+            'θ': r'\theta ', 'ϑ': r'\vartheta ', 'λ': r'\lambda ', 'μ': r'\mu ', 'σ': r'\sigma ', 'τ': r'\tau ',
+            'φ': r'\phi ', 'ϕ': r'\varphi ', 'ω': r'\omega ', 'η': r'\eta ', 'κ': r'\kappa ', 'ρ': r'\rho ',
+            'ψ': r'\psi ', 'ξ': r'\xi ', 'ζ': r'\zeta ',
+            'Δ': r'\Delta ', 'Σ': r'\Sigma ', 'Ω': r'\Omega ', 'Γ': r'\Gamma ', 'Λ': r'\Lambda ',
+            'Φ': r'\Phi ', 'Ψ': r'\Psi ', 'Θ': r'\Theta ', 'Π': r'\Pi ',
+            '≤': r'\le ', '≥': r'\ge ', '≠': r'\ne ', '×': r'\times ', '÷': r'\div ', '±': r'\pm ', '∓': r'\mp ',
+            '≈': r'\approx ', '≡': r'\equiv ', '∼': r'\sim ', '∝': r'\propto ',
+            '∈': r'\in ', '∉': r'\notin ', '⊂': r'\subset ', '⊆': r'\subseteq ', '∪': r'\cup ', '∩': r'\cap ',
+            '→': r'\to ', '←': r'\gets ', '⇒': r'\Rightarrow ', '⇔': r'\Leftrightarrow ', '↔': r'\leftrightarrow ',
+            '∂': r'\partial ', '∇': r'\nabla ', '∫': r'\int ', '∬': r'\iint ', '∭': r'\iiint ', '∮': r'\oint ',
+            '·': r'\cdot ', '°': r'^\circ ', '′': "'", '″': "''"
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
@@ -821,31 +836,31 @@ def omml_to_latex(elem):
     elif tag == 'f':
         num_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}num')
         den_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}den')
-        num = omml_to_latex(num_elem) if num_elem is not None else ''
-        den = omml_to_latex(den_elem) if den_elem is not None else ''
+        num = omml_to_latex(num_elem).strip() if num_elem is not None else ''
+        den = omml_to_latex(den_elem).strip() if den_elem is not None else ''
         return f'\\frac{{{num}}}{{{den}}}'
 
     elif tag == 'sSup':
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         sup_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sup')
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
-        sup_str = omml_to_latex(sup_elem) if sup_elem is not None else ''
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
+        sup_str = omml_to_latex(sup_elem).strip() if sup_elem is not None else ''
         return f'{{{e_str}}}^{{{sup_str}}}'
 
     elif tag == 'sSub':
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         sub_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sub')
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
-        sub_str = omml_to_latex(sub_elem) if sub_elem is not None else ''
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
+        sub_str = omml_to_latex(sub_elem).strip() if sub_elem is not None else ''
         return f'{{{e_str}}}_{{{sub_str}}}'
 
     elif tag == 'sSubSup':
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         sub_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sub')
         sup_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sup')
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
-        sub_str = omml_to_latex(sub_elem) if sub_elem is not None else ''
-        sup_str = omml_to_latex(sup_elem) if sup_elem is not None else ''
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
+        sub_str = omml_to_latex(sub_elem).strip() if sub_elem is not None else ''
+        sup_str = omml_to_latex(sup_elem).strip() if sup_elem is not None else ''
         return f'{{{e_str}}}_{{{sub_str}}}^{{{sup_str}}}'
 
     elif tag == 'd':
@@ -859,10 +874,10 @@ def omml_to_latex(elem):
             if end is not None: end_chr = end.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', end_chr)
         e_elems = elem.findall('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
         inner = ''.join(omml_to_latex(e) for e in e_elems)
-        beg_map = {'(': r'\left(', '[': r'\left[', '{': r'\left\{', '|': r'\left|', '': r'\left.'}
-        end_map = {')': r'\right)', ']': r'\right]', '}': r'\right\}', '|': r'\right|', '': r'\right.'}
-        b_str = beg_map.get(beg_chr, beg_chr)
-        e_str = end_map.get(end_chr, end_chr)
+        beg_map = {'(': r'\left(', '[': r'\left[', '{': r'\left\{', '|': r'\left|', '‖': r'\left\|', '': r'\left.'}
+        end_map = {')': r'\right)', ']': r'\right]', '}': r'\right\}', '|': r'\right|', '‖': r'\right\|', '': r'\right.'}
+        b_str = beg_map.get(beg_chr, f'\\left{beg_chr}' if beg_chr else r'\left.')
+        e_str = end_map.get(end_chr, f'\\right{end_chr}' if end_chr else r'\right.')
         return f'{b_str}{inner}{e_str}'
 
     elif tag == 'nary':
@@ -874,17 +889,31 @@ def omml_to_latex(elem):
         sub_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sub')
         sup_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}sup')
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
-        sub_str = f'_{{{omml_to_latex(sub_elem)}}}' if sub_elem is not None else ''
-        sup_str = f'^{{{omml_to_latex(sup_elem)}}}' if sup_elem is not None else ''
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
-        op_symbol = r'\sum' if chr_val == '∑' else (r'\int' if chr_val == '∫' else (r'\prod' if chr_val == '∏' else chr_val))
+        
+        sub_txt = omml_to_latex(sub_elem).strip() if sub_elem is not None else ''
+        sup_txt = omml_to_latex(sup_elem).strip() if sup_elem is not None else ''
+        sub_str = f'_{{{sub_txt}}}' if sub_txt else ''
+        sup_str = f'^{{{sup_txt}}}' if sup_txt else ''
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
+        
+        op_symbol = r'\sum' if chr_val in ('∑', '\u2211') else (
+            r'\int' if chr_val in ('∫', '\u222b') else (
+                r'\iint' if chr_val in ('∬', '\u222c') else (
+                    r'\iiint' if chr_val in ('∭', '\u222d') else (
+                        r'\oint' if chr_val in ('∮', '\u222e') else (
+                            r'\prod' if chr_val in ('∏', '\u220f') else chr_val
+                        )
+                    )
+                )
+            )
+        )
         return f'{op_symbol}{sub_str}{sup_str}{{{e_str}}}'
 
     elif tag == 'func':
         fname_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}fName')
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
-        fname_str = omml_to_latex(fname_elem) if fname_elem is not None else ''
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        fname_str = omml_to_latex(fname_elem).strip() if fname_elem is not None else ''
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
         std_funcs = {'sin', 'cos', 'tan', 'sec', 'csc', 'cot', 'sinh', 'cosh', 'tanh', 'ln', 'log', 'exp', 'lim', 'min', 'max', 'det', 'gcd', 'deg', 'dim', 'hom', 'ker', 'arg'}
         fn_clean = fname_str.strip().replace('\\', '')
         if fn_clean in std_funcs:
@@ -895,19 +924,40 @@ def omml_to_latex(elem):
     elif tag == 'rad':
         deg_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}deg')
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
-        deg_str = f'[{omml_to_latex(deg_elem)}]' if deg_elem is not None and len(deg_elem) > 0 else ''
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        deg_txt = omml_to_latex(deg_elem).strip() if deg_elem is not None else ''
+        deg_str = f'[{deg_txt}]' if deg_txt else ''
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
         return f'\\sqrt{deg_str}{{{e_str}}}'
+
+    elif tag == 'groupChr':
+        groupChrPr = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}groupChrPr')
+        pos_val = 'top'
+        if groupChrPr is not None:
+            p = groupChrPr.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}pos')
+            if p is not None: pos_val = p.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', pos_val)
+        e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
+        if pos_val == 'top':
+            return f'\\overbrace{{{e_str}}}'
+        else:
+            return f'\\underbrace{{{e_str}}}'
 
     elif tag == 'bar':
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
         return f'\\overline{{{e_str}}}'
 
     elif tag == 'acc':
+        accPr = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}accPr')
+        chr_val = '^'
+        if accPr is not None:
+            c = accPr.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}chr')
+            if c is not None: chr_val = c.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/math}val', chr_val)
         e_elem = elem.find('{http://schemas.openxmlformats.org/officeDocument/2006/math}e')
-        e_str = omml_to_latex(e_elem) if e_elem is not None else ''
-        return f'\\hat{{{e_str}}}'
+        e_str = omml_to_latex(e_elem).strip() if e_elem is not None else ''
+        acc_map = {'^': r'\hat', '¯': r'\bar', '⃗': r'\vec', '˙': r'\dot', '¨': r'\ddot', '~': r'\tilde'}
+        acc_cmd = acc_map.get(chr_val, r'\hat')
+        return f'{acc_cmd}{{{e_str}}}'
 
     else:
         return ''.join(omml_to_latex(child) for child in elem)
@@ -968,7 +1018,11 @@ def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
                     omml_xml_clean = re.sub(r'xmlns:ns\d+="[^"]*"', '', omml_raw)
                     omml_xml_clean = re.sub(r'ns\d+:', 'm:', omml_xml_clean)
                     if 'xmlns:m=' not in omml_xml_clean:
-                        omml_xml_clean = omml_xml_clean.replace('<m:oMath', '<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"')
+                        omml_xml_clean = re.sub(
+                            r'^<m:(oMathPara|oMath)\b',
+                            r'<m:\1 xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"',
+                            omml_xml_clean
+                        )
 
                     latex = omml_to_latex(child)
                     if latex.strip():
@@ -976,13 +1030,12 @@ def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
                         eq_filename = f"eq_{row_idx}_{eq_counter}.png"
                         out_path, w, h = _render_equation_asset(latex, file_id, eq_filename, eq_dir)
                         url = f"/api/equations/{file_id}/{eq_filename}"
-                        aspect_ratio = (w / float(h)) if h > 0 else 1.0
 
                         # Matplotlib renders at 300 DPI: 1 inch = 72 pt = 300 px
                         w_pt = float(w) * (72.0 / 300.0) if w > 0 else 20.0
                         h_pt = float(h) * (72.0 / 300.0) if h > 0 else 14.0
                         aspect_ratio = (w_pt / h_pt) if h_pt > 0 else 1.0
-                        is_block = (tag == 'oMathPara') or (h_pt >= 24.0 and not current_text)
+                        is_block = (tag == 'oMathPara') or (h_pt >= 22.0) or ('\\begin{matrix}' in latex)
 
                         content.append({
                             'type': 'equation',
@@ -1031,6 +1084,16 @@ def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
                             content.append({'type': 'text', 'value': current_text})
                             current_text = ""
                         try:
+                            omml_raw = ET.tostring(r_child, encoding='utf-8').decode('utf-8')
+                            omml_xml_clean = re.sub(r'xmlns:ns\d+="[^"]*"', '', omml_raw)
+                            omml_xml_clean = re.sub(r'ns\d+:', 'm:', omml_xml_clean)
+                            if 'xmlns:m=' not in omml_xml_clean:
+                                omml_xml_clean = re.sub(
+                                    r'^<m:(oMathPara|oMath)\b',
+                                    r'<m:\1 xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"',
+                                    omml_xml_clean
+                                )
+
                             latex = omml_to_latex(r_child)
                             if latex.strip():
                                 eq_counter += 1
@@ -1040,10 +1103,11 @@ def _parse_cell_content(cell, doc, file_id, eq_dir, row_idx):
                                 w_pt = float(w) * (72.0 / 300.0) if w > 0 else 20.0
                                 h_pt = float(h) * (72.0 / 300.0) if h > 0 else 14.0
                                 aspect_ratio = (w_pt / h_pt) if h_pt > 0 else 1.0
-                                is_block = (h_pt >= 24.0 and not current_text)
+                                is_block = (r_tag == 'oMathPara') or (h_pt >= 22.0) or ('\\begin{matrix}' in latex)
                                 content.append({
                                     'type': 'equation',
                                     'latex': latex,
+                                    'omml': omml_xml_clean,
                                     'local_path': out_path,
                                     'url': url,
                                     'width': w,
@@ -1106,11 +1170,11 @@ def _extract_ole_equation_item(obj_elem, doc, file_id, eq_dir, row_idx, eq_numbe
     if not out_path:
         return None
 
-    w_pt = w_pt or (float(img_w) * 0.75 if img_w > 0 else 40.0)
-    h_pt = h_pt or (float(img_h) * 0.75 if img_h > 0 else 18.0)
+    w_pt = w_pt or (float(img_w) * (72.0 / 300.0) if img_w > 0 else 40.0)
+    h_pt = h_pt or (float(img_h) * (72.0 / 300.0) if img_h > 0 else 18.0)
     aspect_ratio = (w_pt / h_pt) if (h_pt > 0) else ((img_w / float(img_h)) if img_h > 0 else 1.0)
     url = f"/api/equations/{file_id}/{eq_filename}"
-    is_block = (h_pt >= 24.0)
+    is_block = (h_pt >= 22.0)
 
     return {
         'type': 'equation',
