@@ -286,7 +286,7 @@ def generate_docx(paper_data, output_path=None):
 
 # ── Helper Functions ──────────────────────────────────────────
 
-def _set_font(run, bold=False, italic=False, size=11):
+def _set_font(run, bold=False, italic=False, size=12):
     run.font.name = 'Times New Roman'
     run.font.size = Pt(size)
     run.bold = bold
@@ -357,13 +357,13 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
 
     if prefix:
         run_p = p.add_run(prefix)
-        _set_font(run_p, bold=True, size=11)
+        _set_font(run_p, bold=True)
 
     if isinstance(q_or_text, dict) and q_or_text.get('content'):
         for item in q_or_text['content']:
             if item['type'] == 'text':
                 run = p.add_run(item['value'])
-                _set_font(run, bold=bold, size=11)
+                _set_font(run, bold=bold)
             elif item['type'] == 'equation':
                 omml_xml = item.get('omml')
                 is_block = item.get('is_block', False)
@@ -381,47 +381,30 @@ def _set_cell_question_content(cell, q_or_text, prefix="", bold=False, align=WD_
                     local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
                     if local_path and os.path.exists(local_path):
                         try:
-                            orig_h = float(item.get('height_pt') or 14.0)
-                            ar = float(item.get('aspect_ratio') or 1.0)
-                            
-                            if is_block:
-                                # Centered block equation on its own line
-                                p_math = cell.add_paragraph()
-                                p_math.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                p_math.paragraph_format.space_before = Pt(3)
-                                p_math.paragraph_format.space_after = Pt(3)
-                                h_pt = max(24.0, min(orig_h * 0.85, 60.0))
-                                w_pt = min(h_pt * ar, 260.0)
-                                run = p_math.add_run()
-                                run.add_picture(local_path, width=Pt(w_pt), height=Pt(h_pt))
-                                # Continue following text on a new paragraph
-                                p = cell.add_paragraph()
-                                p.alignment = align
-                                p.paragraph_format.space_after = Pt(2)
-                                p.paragraph_format.space_before = Pt(1)
-                            else:
-                                # Proportional inline equation
-                                h_pt = max(9.5, min(orig_h * 0.8, 13.5))
-                                w_pt = min(h_pt * ar, 240.0)
-                                run = p.add_run()
-                                run.add_picture(local_path, width=Pt(w_pt), height=Pt(h_pt))
+                            # Use the exact original document dimensions for the equation image.
+                            # orig_w_pt / orig_h_pt come directly from the shape style attribute
+                            # in the source docx (e.g., style="width:67.2pt;height:56.4pt").
+                            # These are the authoritative sizes that match the original format.
+                            disp_w_pt = float(item.get('orig_w_pt') or item.get('width_pt') or 40.0)
+                            disp_h_pt = float(item.get('orig_h_pt') or item.get('height_pt') or 14.0)
+
+                            # Guard: limit to page column width (max ~260pt for question col)
+                            if disp_w_pt > 260.0:
+                                scale = 260.0 / disp_w_pt
+                                disp_w_pt = 260.0
+                                disp_h_pt = disp_h_pt * scale
+
+                            run = p.add_run()
+                            run.add_picture(local_path, width=Pt(disp_w_pt), height=Pt(disp_h_pt))
                         except Exception as e:
                             print(f"Warning: Could not insert equation image into DOCX: {e}")
                             latex = item.get('latex', '')
                             run = p.add_run(f" ${latex}$ " if latex else " [Equation] ")
-                            _set_font(run, bold=bold, size=11)
-        # Remove any trailing empty paragraph created after a block equation
-        while len(cell.paragraphs) > 1:
-            last_p = cell.paragraphs[-1]
-            if not last_p.text.strip() and len(last_p.runs) == 0 and len(last_p._p.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')) == 0:
-                p_elem = last_p._p
-                p_elem.getparent().remove(p_elem)
-            else:
-                break
+                            _set_font(run, bold=bold)
     else:
         text = q_or_text.get('text', '') if isinstance(q_or_text, dict) else str(q_or_text)
         run = p.add_run(text)
-        _set_font(run, bold=bold, size=11)
+        _set_font(run, bold=bold)
 
 
 def _set_cell_text(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
@@ -430,7 +413,7 @@ def _set_cell_text(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
     p.paragraph_format.space_after = Pt(2)
     p.paragraph_format.space_before = Pt(1)
     run = p.add_run(text)
-    _set_font(run, bold=bold, size=11)
+    _set_font(run, bold=bold)
 
 
 def _set_table_col_widths(table, widths):

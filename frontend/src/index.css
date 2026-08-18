@@ -237,21 +237,32 @@ html, body {
   max-width: 100%;
 }
 
+/* Inline equation images (fractions, subscripts, symbols within text) */
 .paper-preview .equation-inline-img {
   display: inline-block;
-  vertical-align: -0.22em;
-  height: 1.25em;
+  /* Use natural pixel size at screen density (rendered at 300 DPI → display at 1x) */
   max-height: 1.5em;
   max-width: 100%;
+  height: auto;
+  width: auto;
+  vertical-align: -0.3em;
   object-fit: contain;
-  margin: 0 2px;
+  margin: 0 1px;
+  /* Crisp rendering to avoid blur of high-DPI PNG at small display sizes */
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
 }
 
+/* Block equation images (matrices, equation systems, multi-line formulas) */
 .paper-preview .equation-block-img {
-  display: inline-block;
-  vertical-align: middle;
-  max-height: 5.5em;
+  display: block;
+  /* Display at the exact pt size from the source document converted to px (1pt = 1.333px at 96dpi) */
   max-width: 100%;
+  height: auto;
+  width: auto;
+  margin: 4px auto;
   object-fit: contain;
-  margin: 4px 2px;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
 }
+

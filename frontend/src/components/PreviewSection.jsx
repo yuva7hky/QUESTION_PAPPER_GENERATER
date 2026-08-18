@@ -113,15 +113,41 @@ function renderQuestionContent(q, prefix = '') {
                 />
               );
             }
-            // Fallback to equation image if no latex or katex render failed
+            // Fallback to equation image
             if (item.url) {
-              const isBlock = item.is_block || (item.height_pt && item.height_pt >= 22);
+              const isBlock = item.is_block;
+              // Convert pt dimensions to CSS pixels (1pt = 96/72 px at standard screen DPI)
+              // The PNG was rendered at 300 DPI, so we scale down to document pt size
+              // 1pt = 1.3333px at 96dpi screen
+              const origW = item.orig_w_pt || item.width_pt;
+              const origH = item.orig_h_pt || item.height_pt;
+              const PT_TO_PX = 96 / 72; // 1.3333
+              const displayW = origW ? Math.round(origW * PT_TO_PX) : undefined;
+              const displayH = origH ? Math.round(origH * PT_TO_PX) : undefined;
+
               return (
                 <img
                   key={idx}
                   src={getAssetUrl(item.url)}
                   alt={item.latex || 'Math Equation'}
                   className={isBlock ? 'equation-block-img' : 'equation-inline-img'}
+                  width={displayW}
+                  height={displayH}
+                  style={isBlock ? {
+                    display: 'block',
+                    margin: '4px 0',
+                    width: displayW ? `${displayW}px` : 'auto',
+                    height: displayH ? `${displayH}px` : 'auto',
+                    maxWidth: '100%',
+                    imageRendering: 'crisp-edges',
+                  } : {
+                    display: 'inline-block',
+                    verticalAlign: '-0.3em',
+                    width: displayW ? `${displayW}px` : 'auto',
+                    height: displayH ? `${displayH}px` : 'auto',
+                    maxHeight: '1.7em',
+                    imageRendering: 'crisp-edges',
+                  }}
                 />
               );
             }
@@ -143,6 +169,7 @@ function renderQuestionContent(q, prefix = '') {
     </div>
   );
 }
+
 
 export default function PreviewSection({ paper }) {
   if (!paper) return null;

@@ -1209,19 +1209,30 @@ def _extract_ole_equation_item(obj_elem, doc, file_id, eq_dir, row_idx, eq_numbe
 
     part = doc.part.rels[rid].target_part
     style = shape.attrib.get('style', '') if shape is not None else ''
-    w_pt, h_pt = _parse_shape_style_dimensions(style)
+    # orig_w_pt/orig_h_pt are the exact dimensions specified in the source document
+    # They are the authoritative display size for exact format preservation
+    orig_w_pt, orig_h_pt = _parse_shape_style_dimensions(style)
 
     eq_filename = f"eq_ole_{row_idx}_{eq_number}.png"
-    out_path, img_w, img_h = _process_equation_ole_image(part.blob, file_id, eq_filename, eq_dir, target_width_pt=w_pt, target_height_pt=h_pt)
+    out_path, img_w, img_h = _process_equation_ole_image(
+        part.blob, file_id, eq_filename, eq_dir,
+        target_width_pt=orig_w_pt, target_height_pt=orig_h_pt
+    )
 
     if not out_path:
         return None
 
-    w_pt = w_pt or (float(img_w) * (72.0 / 300.0) if img_w > 0 else 40.0)
-    h_pt = h_pt or (float(img_h) * (72.0 / 300.0) if img_h > 0 else 18.0)
-    aspect_ratio = (w_pt / h_pt) if (h_pt > 0) else ((img_w / float(img_h)) if img_h > 0 else 1.0)
+    # Use original shape dimensions as the display pt size (not the rendered pixel dimensions)
+    # This preserves the exact sizing from the source document
+    disp_w_pt = orig_w_pt or (float(img_w) * (72.0 / 300.0) if img_w > 0 else 40.0)
+    disp_h_pt = orig_h_pt or (float(img_h) * (72.0 / 300.0) if img_h > 0 else 18.0)
+    aspect_ratio = (disp_w_pt / disp_h_pt) if disp_h_pt > 0 else 1.0
     url = f"/api/equations/{file_id}/{eq_filename}"
-    is_block = (h_pt >= 36.0) or (aspect_ratio < 1.8 and h_pt >= 24.0 and w_pt >= 40.0)
+
+    # is_block: block equations are matrices/systems (tall & wide), NOT narrow inline fractions
+    # A fraction like a/b can have h=31.2pt but w=12pt -> should stay inline
+    # A matrix has h=50-60pt and w=50-100pt -> block
+    is_block = (disp_h_pt >= 36.0) or (disp_h_pt >= 24.0 and disp_w_pt >= 40.0)
 
     return {
         'type': 'equation',
@@ -1230,8 +1241,10 @@ def _extract_ole_equation_item(obj_elem, doc, file_id, eq_dir, row_idx, eq_numbe
         'local_path': out_path,
         'width': img_w,
         'height': img_h,
-        'width_pt': w_pt,
-        'height_pt': h_pt,
+        'width_pt': disp_w_pt,
+        'height_pt': disp_h_pt,
+        'orig_w_pt': orig_w_pt,
+        'orig_h_pt': orig_h_pt,
         'aspect_ratio': aspect_ratio,
         'is_block': is_block,
         'latex': ''

@@ -59,21 +59,25 @@ def _build_pdf_markup(q_or_text, prefix=""):
                 elif item['type'] == 'equation':
                     local_path = item.get('local_path') or _resolve_equation_path(item.get('url'))
                     if local_path and os.path.exists(local_path):
-                        ar = float(item.get('aspect_ratio') or 1.0)
-                        orig_h = float(item.get('height_pt') or 14.0)
-                        orig_w = float(item.get('width_pt') or (orig_h * ar))
-                        is_block = item.get('is_block', False) or (orig_h > 22.0)
-                        
+                        is_block = item.get('is_block', False)
+                        # Use exact original document dimensions (from shape style attribute)
+                        # These preserve the exact sizing that was in the source question bank
+                        disp_w_pt = float(item.get('orig_w_pt') or item.get('width_pt') or 40.0)
+                        disp_h_pt = float(item.get('orig_h_pt') or item.get('height_pt') or 14.0)
+
+                        # Guard: limit to PDF question column width (max ~290pt)
+                        if disp_w_pt > 290.0:
+                            scale = 290.0 / disp_w_pt
+                            disp_w_pt = 290.0
+                            disp_h_pt = disp_h_pt * scale
+
                         if is_block:
-                            # Matrix / multiline / block formula
-                            h_pt = max(20.0, min(orig_h * 0.85, 48.0))
-                            w_pt = max(15.0, min(h_pt * ar, 290.0))
-                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='-10'/>")
+                            # Block equation: vertically aligned so baseline doesn't clip
+                            valign_offset = max(-5.0, -(disp_h_pt * 0.5))
+                            parts.append(f"<img src='{local_path}' width='{disp_w_pt:.1f}' height='{disp_h_pt:.1f}' valign='{valign_offset:.1f}'/>")
                         else:
-                            # Inline formula (fractions, powers, roots, symbols)
-                            h_pt = max(9.5, min(orig_h * 0.85, 15.0))
-                            w_pt = max(6.0, min(h_pt * ar, 260.0))
-                            parts.append(f"<img src='{local_path}' width='{w_pt:.1f}' height='{h_pt:.1f}' valign='-2.5'/>")
+                            # Inline equation: small vertical offset to align with text baseline
+                            parts.append(f"<img src='{local_path}' width='{disp_w_pt:.1f}' height='{disp_h_pt:.1f}' valign='-2.5'/>")
                     else:
                         latex = item.get('latex', '')
                         parts.append(f" ${html_escape(latex)}$ " if latex else " [Equation] ")
